@@ -243,52 +243,55 @@ export default function BasePage() {
   // ---- add row mutation (optimistic) ----
   const addRowMut = api.row.create.useMutation({
     onMutate: async (vars) => {
-      const q = { tableId, limit: 200 as const };
+      const q = { tableId, limit: 200 } as const;
 
       await utils.row.list.cancel(q);
       const prev = utils.row.list.getInfiniteData(q);
 
       const tempId = `temp-${Date.now()}`;
-      const optimisticRow: RowRecord = {
-        id: tempId,
-        tableId,
-        createdAt: new Date().toISOString(),
-        data: vars.data,
-      };
 
-      // Build new cache object without using the callback overload
-      const nextData =
-        !prev
-          ? {
-              pageParams: [],
-              pages: [
-                {
-                  rows: [optimisticRow],
-                  nextCursor: undefined,
-                  total: 1,
-                },
-              ],
-            }
-          : {
-              ...prev,
-              pages: prev.pages.map((p, i, arr) =>
-                i === arr.length - 1 ? { ...p, rows: [...p.rows, optimisticRow] } : p
-              ),
-            };
+      utils.row.list.setInfiniteData(q, (old) => {
+        // optimistic row – cast to the API row type to satisfy TS
+        const optimisticRow = {
+          id: tempId,
+          tableId,
+          createdAt: new Date(),
+          data: vars.data,
+        } as any;
 
-      utils.row.list.setInfiniteData(q, nextData);
-      return { prev, tempId };
+        // No cache yet → create first page
+        if (!old || old.pages.length === 0) {
+          return {
+            pageParams: [],
+            pages: [
+              {
+                rows: [optimisticRow],
+                nextCursor: undefined,
+                total: 1,
+              },
+            ],
+          } as any;
+        }
+
+        // Append to the last page safely
+        const pages = old.pages.map((p, i, arr) =>
+          i === arr.length - 1
+            ? ({ ...p, rows: [...p.rows, optimisticRow] } as any)
+            : p
+        );
+
+        return { ...old, pages } as any;
+      });
+
+      return { prev, q };
     },
 
     onError: (_e, _v, ctx) => {
-      const q = { tableId, limit: 200 as const };
-      if (ctx?.prev) utils.row.list.setInfiniteData(q, ctx.prev);
+      if (ctx?.prev && ctx.q) utils.row.list.setInfiniteData(ctx.q, ctx.prev);
     },
 
-    // keep snappy; one invalidate after server writes the real row id
-    onSettled: () => {
-      const q = { tableId, limit: 200 as const };
-      void utils.row.list.invalidate(q);
+    onSettled: (_r, _e, _v, ctx) => {
+      if (ctx?.q) void utils.row.list.invalidate(ctx.q);
     },
   });
 
