@@ -26,6 +26,22 @@ model Post {
     @@index([name])
 }
 
+model Base {
+    id        String    @id @default(cuid())
+    name      String
+    icon      String?
+    color     String?
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+
+    ownerId String
+    owner   User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+    tables  Table[]
+    
+    @@index([ownerId])  
+}
+
 // Necessary for Next auth
 model Account {
     id                       String  @id @default(cuid())
@@ -63,6 +79,7 @@ model User {
     accounts      Account[]
     sessions      Session[]
     posts         Post[]
+    bases         Base[]
 }
 
 model VerificationToken {
@@ -72,3 +89,99 @@ model VerificationToken {
 
     @@unique([identifier, token])
 }
+
+/* ============================================================
+   Airtable-like grid models
+   - Table: belongs to a Base
+   - Column: schema for a Table
+   - Row: JSONB payload keyed by columnId
+   - TableView: saved "view" configs (filters/sorts/search/hidden)
+   ============================================================ */
+
+enum ColumnType {
+  TEXT
+  NUMBER
+}
+
+model Table {
+  id        String    @id @default(cuid())
+  baseId    String
+  base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  columns   Column[]
+  rows      Row[]
+  views     TableView[]
+
+  @@index([baseId])
+  @@index([name])
+}
+
+model Column {
+  id        String      @id @default(cuid())
+  tableId   String
+  table     Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  name      String
+  type      ColumnType
+  ordinal   Int
+  hidden    Boolean     @default(false)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([tableId, ordinal])
+  @@index([tableId, name])
+}
+
+model Row {
+  id        String    @id @default(cuid())
+  tableId   String
+  table     Table     @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  /// JSONB payload: { [columnId]: string | number | "" }
+  data      Json
+
+  createdAt DateTime  @default(now())
+
+  // Cursor-friendly index for infinite scroll
+  @@index([tableId, createdAt])
+  // Optional: add an extra index to help with large scans by id
+  @@index([tableId, id])
+}
+
+model TableView {
+  id        String    @id @default(cuid())
+  tableId   String
+  table     Table     @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  name      String
+
+  /// Serialized filters definition (array of predicates)
+  /// e.g. [{columnId, op, value}]
+  filters   Json?
+
+  /// Serialized sort definition
+  /// e.g. [{columnId, dir, type}]
+  sorts     Json?
+
+  /// Persisted search string (applied at DB level)
+  search    String?
+
+  /// Persisted hidden columns (store as string array of columnIds)
+  hiddenColumnIds String[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([tableId, name])
+}
+
+/* ============================================================
+   Notes
+   - For faster full-table search, consider adding a GIN index on
+     (data) or to_tsvector over data in a manual SQL migration.
+   - Sorting numbers: cast (data->>columnId)::numeric
+     Sorting text: (data->>columnId) with COLLATE "C"
+   - Filters: use JSON operators (->>) with casts where needed.
+   ============================================================ */

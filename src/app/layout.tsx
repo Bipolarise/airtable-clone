@@ -2,8 +2,7 @@ import "~/styles/globals.css";
 
 import { type Metadata } from "next";
 import { Geist } from "next/font/google";
-
-import { TRPCReactProvider } from "~/trpc/react";
+import Providers from "./providers"; // <-- add this
 
 export const metadata: Metadata = {
   title: "Airtable",
@@ -20,9 +19,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable}`}>
+    <html lang="en" className={geist.variable}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        {/* Wrap the entire app so useSession() works anywhere */}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
