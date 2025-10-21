@@ -72,44 +72,78 @@ type ColumnMeta = {
 };
 type RowRecord = {
   id: string;
-  tableId: string;          // add
-  createdAt: Date | string; // add (superjson will hydrate to Date)
+  tableId: string;
+  createdAt: Date | string;
   data: Record<string, string | number | "">;
 };
+
+/* ---------------- Editable input ---------------- */
 
 function CellEditor({
   initial,
   isNumber,
   onCommit,
+  onMove,         // new
+  inputRefCb,     // new
 }: {
   initial: string | number | "";
   isNumber: boolean;
   onCommit: (val: string | number | "") => void;
+  onMove?: (dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab") => void;
+  inputRefCb?: (el: HTMLInputElement | null) => void;
 }) {
   const [val, setVal] = useState<string>(String(initial ?? ""));
 
-  // If the row was updated elsewhere, reflect it
   useEffect(() => {
     setVal(String(initial ?? ""));
   }, [initial]);
 
   const commit = () => {
-    if (isNumber) {
-      if (val === "") onCommit("");
-      else onCommit(Number(val));
-    } else {
-      onCommit(val);
-    }
+    const next = isNumber ? (val === "" ? "" : Number(val)) : val;
+    // no-op if value didn't change → prevents unnecessary re-renders that can steal focus
+    if (String(next) === String(initial ?? "")) return;
+    onCommit(next);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === "Tab") {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      commit();
+      onMove?.(e.shiftKey ? "shiftTab" : "tab");
+      return;
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      commit();
+      onMove?.("left");
+      return;
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      commit();
+      onMove?.("right");
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      commit();
+      onMove?.("up");
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      commit();
+      onMove?.("down");
+      return;
+    }
+    if (e.key === "Enter") {
       commit();
     }
   };
 
   return (
     <input
+      ref={inputRefCb}
       className="block h-8 w-full px-2 text-[13px] outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
       type={isNumber ? "number" : "text"}
       value={val}
@@ -138,13 +172,44 @@ export default function BasePage() {
     { enabled: !!baseId }
   );
 
+  const utils = api.useUtils();
+
   const createTable = api.table.create.useMutation({
-    onSuccess: (t) => {
-      router.replace(`/b/${String(baseId)}?t=${t.id}`);
+    onMutate: async (vars) => {
+      const q = { baseId: String(baseId) } as const;
+
+      await utils.table.list.cancel(q);
+      const prev = utils.table.list.getData(q);
+
+      const tempId = `temp-${Date.now()}`;
+      const temp = {
+        id: tempId,
+        name: vars.name,
+        icon: null as string | null,
+        color: null as string | null,
+        updatedAt: new Date(),
+      };
+
+      utils.table.list.setData(q, (old) => ([...(old ?? []), temp]));
+      return { prev, q, tempId };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.table.list.setData(ctx.q, ctx.prev);
+    },
+    onSuccess: (real, _vars, ctx) => {
+      if (ctx) {
+        utils.table.list.setData(ctx.q, (old) =>
+          (old ?? []).map((t) => (t.id === ctx.tempId ? real : t))
+        );
+      }
+      if (baseId) router.replace(`/b/${String(baseId)}?t=${real.id}`);
+    },
+    onSettled: (_res, _err, _vars, ctx) => {
+      if (ctx) void utils.table.list.invalidate(ctx.q);
     },
   });
 
-  // Create a nice incremental name: Table 1, Table 2, ...
+  // Create a nice incremental name
   const makeNextTableName = () => {
     const names = (tablesQ.data ?? []).map(t => t.name ?? "");
     let n = 1;
@@ -202,14 +267,52 @@ export default function BasePage() {
   // selection
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
 
+  // ORDER of editable columns (skip the select/plus columns)
+  const editableColIds = useMemo(
+    () => ((cols as ColumnMeta[] | undefined) ?? [])
+      .filter(c => !c.hidden)
+      .map(c => c.id),
+    [cols]
+  );
+  const colIndexMap = useMemo(() => {
+    const m = new Map<string, number>();
+    editableColIds.forEach((id, i) => m.set(id, i));
+    return m;
+  }, [editableColIds]);
+
+  // a tiny ref registry: `${rowId}:${colId}` -> input element
+  const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const setCellRef = (rowId: string, colId: string) => (el: HTMLInputElement | null) => {
+    cellRefs.current[`${rowId}:${colId}`] = el;
+  };
+
+  // queue where we WANT focus to go next (arrow keys or mouse)
+  const pendingFocus = useRef<{ rowIndex: number; colIndex: number } | null>(null);
+
+  // resilient focus (retry after paint until input is mounted)
+  const focusCell = (rowIndex: number, colIndex: number) => {
+    const tryFocus = () => {
+      const r = table.getRowModel().rows[rowIndex];
+      const cId = editableColIds[colIndex];
+      if (!r || !cId) return;
+      const el = cellRefs.current[`${r.original.id}:${cId}`];
+      if (el) {
+        (el as HTMLInputElement).focus({ preventScroll: true } as any);
+        (el as HTMLInputElement).select();
+      } else {
+        requestAnimationFrame(tryFocus);
+      }
+    };
+    // wait at least a frame for React to commit
+    requestAnimationFrame(() => requestAnimationFrame(tryFocus));
+  };
+
   // ---- mutation: update a single cell (optimistic, commit-on-blur/enter) ----
-  const utils = api.useUtils();
   const updateCell = api.row.updateCell.useMutation({
     onMutate: async (vars) => {
       await utils.row.list.cancel({ tableId, limit: 200 });
       const prev = utils.row.list.getInfiniteData({ tableId, limit: 200 });
 
-      // optimistic cache write
       utils.row.list.setInfiniteData({ tableId, limit: 200 }, (data) => {
         if (!data) return data;
         const pages = data.pages.map((p) => {
@@ -228,15 +331,23 @@ export default function BasePage() {
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) utils.row.list.setInfiniteData({ tableId, limit: 200 }, ctx.prev);
     },
-    // No onSettled invalidation -> avoids flicker & lag while typing
   });
+
+  // after edits finish or data changes, apply queued focus
+  useEffect(() => {
+    if (!updateCell.isPending && pendingFocus.current) {
+      const { rowIndex, colIndex } = pendingFocus.current;
+      pendingFocus.current = null;
+      focusCell(rowIndex, colIndex);
+    }
+  }, [updateCell.isPending, rowsQ.data]); // rowsQ.data covers optimistic page changes too
 
   // helper: build empty row from schema
   const makeEmptyRow = () =>
     Object.fromEntries(
       ((cols as ColumnMeta[] | undefined) ?? []).map((c) => [
         c.id,
-        "", // allow empty text or number; server stores string, that's fine
+        "",
       ])
     ) as Record<string, string | number | "">;
 
@@ -251,7 +362,6 @@ export default function BasePage() {
       const tempId = `temp-${Date.now()}`;
 
       utils.row.list.setInfiniteData(q, (old) => {
-        // optimistic row – cast to the API row type to satisfy TS
         const optimisticRow = {
           id: tempId,
           tableId,
@@ -259,7 +369,6 @@ export default function BasePage() {
           data: vars.data,
         } as any;
 
-        // No cache yet → create first page
         if (!old || old.pages.length === 0) {
           return {
             pageParams: [],
@@ -273,7 +382,6 @@ export default function BasePage() {
           } as any;
         }
 
-        // Append to the last page safely
         const pages = old.pages.map((p, i, arr) =>
           i === arr.length - 1
             ? ({ ...p, rows: [...p.rows, optimisticRow] } as any)
@@ -302,30 +410,65 @@ export default function BasePage() {
     // selection column
     defs.push({
       id: "__select",
-      header: ({ table }) => {
-        const all = table.getIsAllRowsSelected();
-        const ind = table.getIsSomeRowsSelected();
-        return (
-          <SelectableCheckbox
-            checked={all}
-            indeterminate={ind}
-            onChange={table.getToggleAllRowsSelectedHandler() as any}
-            className="mx-auto"
-          />
-        );
-      },
-      cell: ({ row }) => (
-        <SelectableCheckbox
-          checked={row.getIsSelected()}
-          indeterminate={row.getIsSomeSelected()}
-          onChange={row.getToggleSelectedHandler() as any}
-          className="mx-auto"
-        />
-      ),
       size: 48,
       minSize: 48,
       enableSorting: false,
       enableResizing: false,
+
+      header: ({ table }) => {
+        const all = table.getIsAllRowsSelected(); // only care if ALL are selected
+
+        const headerCheckboxClass =
+          "absolute transition-opacity " +
+          (all ? "opacity-100" : "opacity-0 group-hover:opacity-100");
+
+        return (
+          <div className="relative flex h-8 w-full items-center justify-center">
+            {/* placeholder empty box (only visible when NOT all selected) */}
+            <span
+              aria-hidden
+              className={
+                "inline-flex h-5 w-5 items-center justify-center rounded bg-white ring-1 ring-neutral-300 " +
+                (all ? "hidden" : "group-hover:hidden")
+              }
+            />
+            {/* real checkbox; never show indeterminate in the header */}
+            <SelectableCheckbox
+              checked={all}
+              indeterminate={false}
+              onChange={table.getToggleAllRowsSelectedHandler() as any}
+              className={headerCheckboxClass}
+            />
+          </div>
+        );
+      },
+
+      cell: ({ row }) => {
+        const selected = row.getIsSelected();
+        const cellCheckboxClass =
+          "absolute transition-opacity " +
+          (selected ? "opacity-100" : "opacity-0 group-hover:opacity-100");
+
+        return (
+          <div className="relative flex h-8 w-full items-center justify-center">
+            <span
+              className={
+                "pointer-events-none text-xs tabular-nums text-neutral-500 " +
+                (selected ? "hidden" : "group-hover:hidden")
+              }
+            >
+              {row.index + 1}
+            </span>
+
+            <SelectableCheckbox
+              checked={selected}
+              indeterminate={row.getIsSomeSelected()}
+              onChange={row.getToggleSelectedHandler() as any}
+              className={cellCheckboxClass}
+            />
+          </div>
+        );
+      },
     });
 
     // DB columns
@@ -341,23 +484,63 @@ export default function BasePage() {
           </div>
         ),
         accessorFn: (row) => row.data[c.id] ?? "",
-        // IMPORTANT: editable cell that commits on blur/Enter/Tab
-        cell: ({ row, getValue }) => {
+        cell: ({ row, getValue, column }) => {
           const v = getValue() as string | number | "";
           const isNumber = c.type === "NUMBER";
+
+          const curRowIndex = row.index;
+          const curColIndex = colIndexMap.get(column.id) ?? 0;
+          const lastCol = editableColIds.length - 1;
+
+          const move = (dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab") => {
+            let r = curRowIndex;
+            let col = curColIndex;
+
+            switch (dir) {
+              case "left":     col = Math.max(0, col - 1); break;
+              case "right":    col = Math.min(lastCol, col + 1); break;
+              case "up":       r = Math.max(0, r - 1); break;
+              case "down":     r = Math.min(table.getRowModel().rows.length - 1, r + 1); break;
+              case "tab":
+                if (col < lastCol) col++;
+                else { col = 0; r = Math.min(table.getRowModel().rows.length - 1, r + 1); }
+                break;
+              case "shiftTab":
+                if (col > 0) col--;
+                else { col = lastCol; r = Math.max(0, r - 1); }
+                break;
+            }
+            pendingFocus.current = { rowIndex: r, colIndex: col };
+            // also try to focus immediately (with retry) — covers cases with no mutation
+            focusCell(r, col);
+          };
+
           return (
-            <CellEditor
-              initial={v}
-              isNumber={isNumber}
-              onCommit={(finalVal) =>
-                updateCell.mutate({
-                  rowId: row.original.id,
-                  columnId: c.id,
-                  value: finalVal,
-                  colType: c.type,          // <<< add this line
-                })
-              }
-            />
+            <div
+              className="h-8"
+              onMouseDown={(e) => {
+                // record destination first, then prevent fragile native focus
+                pendingFocus.current = { rowIndex: curRowIndex, colIndex: curColIndex };
+                e.preventDefault();
+                // attempt immediate focus; if edit triggers a rerender, our effect will re-apply
+                focusCell(curRowIndex, curColIndex);
+              }}
+            >
+              <CellEditor
+                initial={v}
+                isNumber={isNumber}
+                onCommit={(finalVal) =>
+                  updateCell.mutate({
+                    rowId: row.original.id,
+                    columnId: c.id,
+                    value: finalVal,
+                    colType: c.type,
+                  })
+                }
+                onMove={move}
+                inputRefCb={setCellRef(row.original.id, c.id)}
+              />
+            </div>
           );
         },
         size: c.ordinal === 0 ? 220 : 160,
@@ -377,7 +560,7 @@ export default function BasePage() {
     });
 
     return defs;
-  }, [cols, updateCell]);
+  }, [cols, updateCell, colIndexMap, editableColIds]);
 
   const table = useReactTable({
     data: allRows,
@@ -388,6 +571,9 @@ export default function BasePage() {
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: "onChange",
   });
+
+  const allSelected  = table.getIsAllRowsSelected();
+  const someSelected = table.getIsSomeRowsSelected();
 
   // fetch next page on scroll-near-bottom
   const containerRef = useRef<HTMLDivElement>(null);
@@ -417,7 +603,7 @@ export default function BasePage() {
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
   if (!base || !cols) return <div className="p-6">Not found.</div>;
 
-  /* ---------------- UI (unchanged shell) ---------------- */
+  /* ---------------- UI ---------------- */
 
   return (
     <div className="relative min-h-screen bg-white text-[13px] text-neutral-700">
@@ -529,7 +715,7 @@ export default function BasePage() {
               </button>
             </div>
 
-            {/* Right: other toolbar buttons (unchanged) */}
+            {/* Right: other toolbar buttons */}
             <div className="flex items-center gap-1">
               <ToolBtn>Hide fields</ToolBtn>
               <ToolBtn>Filter</ToolBtn>
@@ -566,12 +752,13 @@ export default function BasePage() {
           <table className="w-full border-separate border-spacing-0 text-[13px]">
             <thead>
               {table.getHeaderGroups().map((hg) => (
-                <tr key={hg.id}>
+                <tr key={hg.id} className="group">
                   {hg.headers.map((h, i) => (
                     <th
                       key={h.id}
                       className={[
-                        "sticky top-0 z-10 border-b border-r border-neutral-200 bg-neutral-50 px-2 py-0 text-left font-normal",
+                        "sticky top-0 z-10 border-b border-r border-neutral-200 px-2 py-0 text-left font-normal",
+                        allSelected ? "bg-blue-50" : "bg-neutral-50",
                         i === 0 ? "w-12" : "",
                       ].join(" ")}
                       style={{ width: h.getSize() }}
@@ -588,32 +775,40 @@ export default function BasePage() {
             </thead>
 
             <tbody>
-              {table.getRowModel().rows.map((r) => (
-                <tr key={r.id} className="group">
-                  {r.getVisibleCells().map((c, i) => (
-                    <td
-                      key={c.id}
-                      className={[
-                        "border-b border-r border-neutral-200 bg-white p-0",
-                        i === 0 ? "bg-neutral-50 text-center align-middle" : "",
-                      ].join(" ")}
-                      style={{ width: c.column.getSize() }}
-                    >
-                      {i === 0 ? (
-                        <div className="flex h-8 items-center justify-center">
-                          {flexRender(c.column.columnDef.cell, c.getContext())}
-                        </div>
-                      ) : (
-                        flexRender(c.column.columnDef.cell, c.getContext())
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {table.getRowModel().rows.map((r) => {
+                const selected = r.getIsSelected();
+                return (
+                  <tr key={r.id} className="group">
+                    {r.getVisibleCells().map((c, i) => {
+                      return (
+                        <td
+                          key={c.id}
+                          className={[
+                            "border-b border-r border-neutral-200 p-0",
+                            selected ? "bg-blue-50" : "bg-white",
+                            i === 0
+                              ? (selected ? "bg-blue-50" : "bg-neutral-50") +
+                                " text-center align-middle"
+                              : "",
+                          ].join(" ")}
+                          style={{ width: c.column.getSize() }}
+                        >
+                          {i === 0 ? (
+                            <div className="flex h-8 items-center justify-center">
+                              {flexRender(c.column.columnDef.cell, c.getContext())}
+                            </div>
+                          ) : (
+                            flexRender(c.column.columnDef.cell, c.getContext())
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
 
               {/* Airtable-style add row: plus only in the left gutter */}
               <tr>
-                {/* left gutter with + */}
                 <td className="bg-neutral-50 border-b border-r border-neutral-200 p-0 w-12">
                   <button
                     onClick={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
@@ -629,14 +824,15 @@ export default function BasePage() {
                     </svg>
                   </button>
                 </td>
-                {/* filler cells across rest of columns */}
-                {table.getVisibleLeafColumns().slice(1).map((col) => (
-                  <td
-                    key={`stub-${col.id}`}
-                    className="border-b border-r border-neutral-200 p-0 bg-white"
-                    style={{ width: col.getSize() }}
-                  />
-                ))}
+                {table.getVisibleLeafColumns().slice(1).map((col) => {
+                  return (
+                    <td
+                      key={`stub-${col.id}`}
+                      className="border-b border-r border-neutral-200 p-0 bg-white"
+                      style={{ width: col.getSize() }}
+                    />
+                  );
+                })}
               </tr>
             </tbody>
           </table>
@@ -660,6 +856,7 @@ export default function BasePage() {
 }
 
 /* Pretty checkbox with indeterminate */
+/* Airtable-style checkbox (matches size/colors/hover/focus) */
 function SelectableCheckbox({
   checked,
   indeterminate,
@@ -676,35 +873,46 @@ function SelectableCheckbox({
     if (ref.current) ref.current.indeterminate = indeterminate;
   }, [indeterminate]);
 
+  const base =
+    "relative inline-flex h-5 w-5 items-center justify-center rounded-[4px] transition-colors " +
+    "shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)] outline-none " +
+    "focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[#166EE1] focus-within:ring-offset-white";
+
+  const on  = "bg-[#166EE1] ring-1 ring-[#166EE1] hover:bg-[#166EE1]";
+  const off = "bg-white ring-1 ring-neutral-300 hover:bg-neutral-50 hover:ring-neutral-400";
+
   return (
-    <label className={`inline-flex items-center ${className}`}>
-      <input
-        ref={ref}
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="peer sr-only"
-      />
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-white ring-1 ring-neutral-300 peer-checked:bg-[#4663ff] peer-checked:ring-[#4663ff]">
+    <label className={["inline-flex items-center justify-center", className].join(" ")}>
+      <input ref={ref} type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
+      <span className={[base, checked || indeterminate ? on : off].join(" ")}>
+        {/* checkmark */}
         <svg
-          width="12"
-          height="12"
+          width="14"
+          height="14"
           viewBox="0 0 24 24"
-          className="opacity-0 peer-checked:opacity-100 text-white"
+          className={checked && !indeterminate ? "opacity-100" : "opacity-0"}
+          style={{ transition: "opacity 120ms" }}
           fill="none"
-          stroke="currentColor"
+          stroke="white"
           strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
         >
           <polyline points="20 6 9 17 4 12" />
         </svg>
+        {/* indeterminate bar */}
         <svg
-          width="12"
-          height="12"
+          width="14"
+          height="14"
           viewBox="0 0 24 24"
-          className={`${indeterminate && !checked ? "opacity-100" : "opacity-0"} absolute text-white`}
+          className={indeterminate && !checked ? "opacity-100 absolute" : "opacity-0 absolute"}
+          style={{ transition: "opacity 120ms" }}
           fill="none"
-          stroke="currentColor"
+          stroke="white"
           strokeWidth="3"
+          strokeLinecap="round"
+          aria-hidden
         >
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
@@ -713,7 +921,7 @@ function SelectableCheckbox({
   );
 }
 
-/* --------- NEW: commit-on-blur editor to fix one-letter typing --------- */
+/* (Unused now) Older EditableCell kept for reference; can be removed */
 function EditableCell({
   rowId,
   columnId,
@@ -733,20 +941,16 @@ function EditableCell({
   }) => void;
 }) {
   const [val, setVal] = useState<string>(String(initial ?? ""));
-
-  // keep in sync if data is refreshed externally
   useEffect(() => {
     setVal(String(initial ?? ""));
   }, [initial, rowId, columnId]);
-
   const doCommit = () => {
     commit({ rowId, columnId, value: val, colType });
   };
-
   return (
     <input
       className="block h-8 w-full px-2 text-[13px] outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-      type="text" // keep text to allow "" and partial numbers while editing
+      type="text"
       value={val}
       onChange={(e) => setVal(e.target.value)}
       onBlur={doCommit}
