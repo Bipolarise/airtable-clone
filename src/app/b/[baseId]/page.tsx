@@ -2,67 +2,23 @@
 
 import { useMemo, useRef, useState, useEffect } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import SelectableCheckbox from "~/app/_components/SelectableCheckbox";
+import CellEditor from "~/app/_components/CellEditor";
+import LeftRail from "~/app/_components/LeftRail";
+import BaseHeaderToolbar from "~/app/_components/BaseHeaderToolbar";
+import DataGrid from "~/app/_components/DataGrid";
+import ViewHeaderBar from "~/app/_components/ViewHeaderBar";
 import {
   type ColumnDef,
-  flexRender,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { api } from "~/trpc/react";
 
 /* ---------------- UI helpers ---------------- */
-
 const SIDEBAR_W_CLASS = "pl-14";
 
-function ToolBtn({ children }: { children: React.ReactNode }) {
-  return (
-    <button className="rounded px-2 py-1 text-[12px] text-neutral-600 hover:bg-amber-100">
-      {children}
-    </button>
-  );
-}
-function RailBtn({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      className="flex h-8 w-8 items-center justify-center rounded hover:bg-neutral-100"
-      title={title}
-    >
-      {children}
-    </button>
-  );
-}
-/** Mask an SVG and paint it with `background-color` (for white header glyph) */
-function MaskIcon({
-  src,
-  className = "",
-  color = "white",
-}: {
-  src: string;
-  className?: string;
-  color?: string;
-}) {
-  return (
-    <span
-      className={className}
-      style={{
-        backgroundColor: color,
-        WebkitMask: `url(${src}) center / contain no-repeat`,
-        mask: `url(${src}) center / contain no-repeat`,
-        display: "inline-block",
-      }}
-    />
-  );
-}
-
 /* ---------------- Data models ---------------- */
-
 type ColumnMeta = {
   id: string;
   name: string;
@@ -77,102 +33,26 @@ type RowRecord = {
   data: Record<string, string | number | "">;
 };
 
-/* ---------------- Editable input ---------------- */
-
-function CellEditor({
-  initial,
-  isNumber,
-  onCommit,
-  onMove,         // new
-  inputRefCb,     // new
-}: {
-  initial: string | number | "";
-  isNumber: boolean;
-  onCommit: (val: string | number | "") => void;
-  onMove?: (dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab") => void;
-  inputRefCb?: (el: HTMLInputElement | null) => void;
-}) {
-  const [val, setVal] = useState<string>(String(initial ?? ""));
-
-  useEffect(() => {
-    setVal(String(initial ?? ""));
-  }, [initial]);
-
-  const commit = () => {
-    const next = isNumber ? (val === "" ? "" : Number(val)) : val;
-    // no-op if value didn't change → prevents unnecessary re-renders that can steal focus
-    if (String(next) === String(initial ?? "")) return;
-    onCommit(next);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      commit();
-      onMove?.(e.shiftKey ? "shiftTab" : "tab");
-      return;
-    }
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      commit();
-      onMove?.("left");
-      return;
-    }
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      commit();
-      onMove?.("right");
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      commit();
-      onMove?.("up");
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      commit();
-      onMove?.("down");
-      return;
-    }
-    if (e.key === "Enter") {
-      commit();
-    }
-  };
-
-  return (
-    <input
-      ref={inputRefCb}
-      className="block h-8 w-full px-2 text-[13px] outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-      type={isNumber ? "number" : "text"}
-      value={val}
-      onChange={(e) => setVal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={onKeyDown}
-    />
-  );
-}
-
 /* ---------------- Page ---------------- */
-
 export default function BasePage() {
   const router = useRouter();
   const { baseId } = useParams<{ baseId: string }>();
   const search = useSearchParams();
   const urlTableId = search.get("t") ?? "";
 
-  // base header
+  // active table id from URL
+  const tableId = urlTableId;
+
+  const utils = api.useUtils();
+
+  /* ---------------- Base + tables ---------------- */
   const { data: base, isLoading: baseLoading, error: baseErr } =
     api.base.byId.useQuery({ id: String(baseId) });
 
-  // list tables to pick or create one automatically
   const tablesQ = api.table.list.useQuery(
     { baseId: String(baseId) },
     { enabled: !!baseId }
   );
-
-  const utils = api.useUtils();
 
   const createTable = api.table.create.useMutation({
     onMutate: async (vars) => {
@@ -190,7 +70,7 @@ export default function BasePage() {
         updatedAt: new Date(),
       };
 
-      utils.table.list.setData(q, (old) => ([...(old ?? []), temp]));
+      utils.table.list.setData(q, (old) => [...(old ?? []), temp]);
       return { prev, q, tempId };
     },
     onError: (_err, _vars, ctx) => {
@@ -209,9 +89,9 @@ export default function BasePage() {
     },
   });
 
-  // Create a nice incremental name
+  // helper: "Table N" naming
   const makeNextTableName = () => {
-    const names = (tablesQ.data ?? []).map(t => t.name ?? "");
+    const names = (tablesQ.data ?? []).map((t) => t.name ?? "");
     let n = 1;
     while (names.includes(`Table ${n}`)) n++;
     return `Table ${n}`;
@@ -227,7 +107,9 @@ export default function BasePage() {
     createTable.mutate({ baseId: String(baseId), name: makeNextTableName() });
   };
 
-  // Redirect to first table, or create one
+  // if there's no ?t= yet:
+  // - go to first table if it exists
+  // - otherwise create the first table
   useEffect(() => {
     if (!baseId) return;
     if (urlTableId) return;
@@ -242,16 +124,36 @@ export default function BasePage() {
     }
   }, [baseId, urlTableId, tablesQ.status, tablesQ.data, router, createTable]);
 
-  const tableId = urlTableId;
+  /* ---------------- Columns (schema) + rows (data) ---------------- */
 
-  // columns (schema)
+  // get columns for THIS table
   const {
-    data: cols,
+    data: colsFromServer,
     isLoading: colsLoading,
     error: colsErr,
-  } = api.table.meta.useQuery({ tableId }, { enabled: !!tableId });
+  } = api.table.meta.useQuery(
+    { tableId },
+    { enabled: !!tableId }
+  );
 
-  // rows (infinite)
+  // local optimistic columns for THIS table
+  const [localCols, setLocalCols] = useState<ColumnMeta[] | null>(null);
+
+  // 🔑 IMPORTANT:
+  // when the user switches tables (?t=...), React keeps the same component alive.
+  // we MUST clear any optimistic columns from the previous table so they don't "leak"
+  useEffect(() => {
+    setLocalCols(null);
+  }, [tableId]);
+
+  // merge server cols and optimistic cols for display
+  const unifiedCols: ColumnMeta[] = useMemo(() => {
+    return (localCols ?? (colsFromServer as ColumnMeta[] | undefined) ?? [])
+      .slice()
+      .sort((a, b) => a.ordinal - b.ordinal);
+  }, [localCols, colsFromServer]);
+
+  // rows (infinite/paginated)
   const rowsQ = api.row.list.useInfiniteQuery(
     { tableId, limit: 200 },
     {
@@ -259,37 +161,40 @@ export default function BasePage() {
       getNextPageParam: (d) => d?.nextCursor ?? undefined,
     }
   );
+
   const allRows: RowRecord[] = useMemo(
     () => (rowsQ.data?.pages ?? []).flatMap((p) => p.rows as RowRecord[]),
     [rowsQ.data]
   );
 
-  // selection
+  // selection state
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
 
-  // ORDER of editable columns (skip the select/plus columns)
+  // which column ids are actually editable / in order
   const editableColIds = useMemo(
-    () => ((cols as ColumnMeta[] | undefined) ?? [])
-      .filter(c => !c.hidden)
-      .map(c => c.id),
-    [cols]
+    () => unifiedCols.filter((c) => !c.hidden).map((c) => c.id),
+    [unifiedCols]
   );
+
   const colIndexMap = useMemo(() => {
     const m = new Map<string, number>();
     editableColIds.forEach((id, i) => m.set(id, i));
     return m;
   }, [editableColIds]);
 
-  // a tiny ref registry: `${rowId}:${colId}` -> input element
+  // cell refs for focus management
   const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const setCellRef = (rowId: string, colId: string) => (el: HTMLInputElement | null) => {
-    cellRefs.current[`${rowId}:${colId}`] = el;
-  };
+  const setCellRef =
+    (rowId: string, colId: string) => (el: HTMLInputElement | null) => {
+      cellRefs.current[`${rowId}:${colId}`] = el;
+    };
 
-  // queue where we WANT focus to go next (arrow keys or mouse)
-  const pendingFocus = useRef<{ rowIndex: number; colIndex: number } | null>(null);
+  // queued focus jump after tab/arrows
+  const pendingFocus = useRef<{ rowIndex: number; colIndex: number } | null>(
+    null
+  );
 
-  // resilient focus (retry after paint until input is mounted)
+  // helper to focus specific cell
   const focusCell = (rowIndex: number, colIndex: number) => {
     const tryFocus = () => {
       const r = table.getRowModel().rows[rowIndex];
@@ -303,11 +208,10 @@ export default function BasePage() {
         requestAnimationFrame(tryFocus);
       }
     };
-    // wait at least a frame for React to commit
     requestAnimationFrame(() => requestAnimationFrame(tryFocus));
   };
 
-  // ---- mutation: update a single cell (optimistic, commit-on-blur/enter) ----
+  /* ---------------- row.updateCell mutation ---------------- */
   const updateCell = api.row.updateCell.useMutation({
     onMutate: async (vars) => {
       await utils.row.list.cancel({ tableId, limit: 200 });
@@ -318,7 +222,13 @@ export default function BasePage() {
         const pages = data.pages.map((p) => {
           const rows = p.rows.map((r: any) =>
             r.id === vars.rowId
-              ? { ...r, data: { ...r.data, [vars.columnId]: String(vars.value) } }
+              ? {
+                  ...r,
+                  data: {
+                    ...r.data,
+                    [vars.columnId]: String(vars.value),
+                  },
+                }
               : r
           );
           return { ...p, rows };
@@ -329,29 +239,31 @@ export default function BasePage() {
       return { prev };
     },
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev) utils.row.list.setInfiniteData({ tableId, limit: 200 }, ctx.prev);
+      if (ctx?.prev)
+        utils.row.list.setInfiniteData(
+          { tableId, limit: 200 },
+          ctx.prev
+        );
     },
   });
 
-  // after edits finish or data changes, apply queued focus
+  // after committing edit, jump focus if needed
   useEffect(() => {
     if (!updateCell.isPending && pendingFocus.current) {
       const { rowIndex, colIndex } = pendingFocus.current;
       pendingFocus.current = null;
       focusCell(rowIndex, colIndex);
     }
-  }, [updateCell.isPending, rowsQ.data]); // rowsQ.data covers optimistic page changes too
+  }, [updateCell.isPending, rowsQ.data]);
 
-  // helper: build empty row from schema
+  /* ---------------- helper: build empty row ---------------- */
   const makeEmptyRow = () =>
-    Object.fromEntries(
-      ((cols as ColumnMeta[] | undefined) ?? []).map((c) => [
-        c.id,
-        "",
-      ])
-    ) as Record<string, string | number | "">;
+    Object.fromEntries(unifiedCols.map((c) => [c.id, ""])) as Record<
+      string,
+      string | number | ""
+    >;
 
-  // ---- add row mutation (optimistic) ----
+  /* ---------------- row.create mutation ---------------- */
   const addRowMut = api.row.create.useMutation({
     onMutate: async (vars) => {
       const q = { tableId, limit: 200 } as const;
@@ -360,7 +272,6 @@ export default function BasePage() {
       const prev = utils.row.list.getInfiniteData(q);
 
       const tempId = `temp-${Date.now()}`;
-
       utils.row.list.setInfiniteData(q, (old) => {
         const optimisticRow = {
           id: tempId,
@@ -373,18 +284,14 @@ export default function BasePage() {
           return {
             pageParams: [],
             pages: [
-              {
-                rows: [optimisticRow],
-                nextCursor: undefined,
-                total: 1,
-              },
+              { rows: [optimisticRow], nextCursor: undefined, total: 1 },
             ],
           } as any;
         }
 
         const pages = old.pages.map((p, i, arr) =>
           i === arr.length - 1
-            ? ({ ...p, rows: [...p.rows, optimisticRow] } as any)
+            ? { ...p, rows: [...p.rows, optimisticRow] }
             : p
         );
 
@@ -393,38 +300,109 @@ export default function BasePage() {
 
       return { prev, q };
     },
-
     onError: (_e, _v, ctx) => {
-      if (ctx?.prev && ctx.q) utils.row.list.setInfiniteData(ctx.q, ctx.prev);
+      if (ctx?.prev && ctx.q)
+        utils.row.list.setInfiniteData(ctx.q, ctx.prev);
     },
-
     onSettled: (_r, _e, _v, ctx) => {
       if (ctx?.q) void utils.row.list.invalidate(ctx.q);
     },
   });
 
-  // tanstack columns
+  /* ---------------- column.create mutation ---------------- */
+
+  // helper to pick next unique "Field N" for this table
+  const makeNextColumnName = () => {
+    const names = unifiedCols.map((c) => c.name);
+    let n = 1;
+    while (names.includes(`Field ${n}`)) n++;
+    return `Field ${n}`;
+  };
+
+  const createColumn = api.column.create.useMutation({
+    onMutate: async (vars) => {
+      // figure out the next ordinal for this table
+      const maxOrdinal =
+        unifiedCols.reduce(
+          (acc, c) => (c.ordinal > acc ? c.ordinal : acc),
+          -1
+        ) ?? -1;
+      const nextOrdinal = maxOrdinal + 1;
+
+      const tempId = `temp-col-${Date.now()}`;
+
+      // optimistic: add a fake col locally
+      setLocalCols((prev) => {
+        const baseCols =
+          prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
+        const optimisticCol: ColumnMeta = {
+          id: tempId,
+          name: vars.name,
+          type: (vars.type ?? "TEXT") as "TEXT" | "NUMBER",
+          hidden: false,
+          ordinal: nextOrdinal,
+        };
+        return [...baseCols, optimisticCol];
+      });
+
+      return { tempId };
+    },
+    onError: () => {
+      // If creation fails, just refetch to get back to a clean state.
+      void utils.table.meta.invalidate({ tableId });
+    },
+    onSuccess: (real, _vars, ctx) => {
+      // swap the temp col with the real DB col
+      setLocalCols((prev) => {
+        const baseCols =
+          prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
+        return baseCols.map((c) =>
+          c.id === ctx?.tempId
+            ? {
+                id: real.id,
+                name: real.name,
+                type: real.type as "TEXT" | "NUMBER",
+                hidden: real.hidden ?? false,
+                ordinal: real.ordinal,
+              }
+            : c
+        );
+      });
+    },
+    onSettled: () => {
+      // final sync with server
+      void utils.table.meta.invalidate({ tableId });
+    },
+  });
+
+  const handleAddColumn = () => {
+    if (!tableId || createColumn.isPending) return;
+    createColumn.mutate({
+      tableId,
+      name: makeNextColumnName(),
+      type: "TEXT", // default new column type
+    });
+  };
+
+  /* ---------------- ColumnDefs for TanStack Table ---------------- */
   const columnDefs: ColumnDef<RowRecord, any>[] = useMemo(() => {
     const defs: ColumnDef<RowRecord, any>[] = [];
 
-    // selection column
+    // 1. left rail checkbox / row index column
     defs.push({
       id: "__select",
       size: 48,
       minSize: 48,
       enableSorting: false,
       enableResizing: false,
-
       header: ({ table }) => {
-        const all = table.getIsAllRowsSelected(); // only care if ALL are selected
-
+        const all = table.getIsAllRowsSelected();
         const headerCheckboxClass =
           "absolute transition-opacity " +
           (all ? "opacity-100" : "opacity-0 group-hover:opacity-100");
 
         return (
           <div className="relative flex h-8 w-full items-center justify-center">
-            {/* placeholder empty box (only visible when NOT all selected) */}
             <span
               aria-hidden
               className={
@@ -432,7 +410,6 @@ export default function BasePage() {
                 (all ? "hidden" : "group-hover:hidden")
               }
             />
-            {/* real checkbox; never show indeterminate in the header */}
             <SelectableCheckbox
               checked={all}
               indeterminate={false}
@@ -442,7 +419,6 @@ export default function BasePage() {
           </div>
         );
       },
-
       cell: ({ row }) => {
         const selected = row.getIsSelected();
         const cellCheckboxClass =
@@ -459,7 +435,6 @@ export default function BasePage() {
             >
               {row.index + 1}
             </span>
-
             <SelectableCheckbox
               checked={selected}
               indeterminate={row.getIsSomeSelected()}
@@ -471,64 +446,209 @@ export default function BasePage() {
       },
     });
 
-    // DB columns
-    for (const c of (cols as ColumnMeta[] | undefined) ?? []) {
+    // 2. real data columns from unifiedCols
+    for (const c of unifiedCols) {
       if (c.hidden) continue;
+
       defs.push({
         id: c.id,
-        header: () => (
-          <div className="flex h-8 items-center gap-1.5">
-            <span className="truncate text-[12px] font-medium text-neutral-700">
-              {c.name}
-            </span>
-          </div>
-        ),
+
+        header: () => {
+          // optional: icons based on column name, same logic you had
+          const headerIcon = (() => {
+            switch (c.name) {
+              case "Name":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M8.44187 3.26606C8.35522 3.10237 8.18518 3 7.99998 3C7.81477 3 7.64474 3.10237 7.55808 3.26606L3.05808 11.7661C2.92888 12.0101 3.02198 12.3127 3.26603 12.4419C3.51009 12.5711 3.81267 12.478 3.94187 12.2339L5.12455 10H10.8754L12.0581 12.2339C12.1873 12.478 12.4899 12.5711 12.7339 12.4419C12.978 12.3127 13.0711 12.0101 12.9419 11.7661L8.44187 3.26606ZM10.346 9L7.99998 4.56863L5.65396 9H10.346Z"
+                    />
+                  </svg>
+                );
+              case "Notes":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="nonzero"
+                      d="M4.24999 3C4.43937 3 4.6125 3.107 4.6972 3.27639L6.4472 6.77639C6.5707 7.02338 6.47058 7.32372 6.22359 7.44721C5.9766 7.57071 5.67627 7.4706 5.55277 7.22361L5.17327 6.4646H3.3267L2.9472 7.22361C2.82371 7.4706 2.52337 7.57071 2.27638 7.44721C2.02939 7.32372 1.92928 7.02338 2.05277 6.77639L3.80277 3.27639C3.88747 3.107 4.0606 3 4.24999 3ZM3.8267 5.4646H4.67327L4.24999 4.61803L3.8267 5.4646Z M7.5 3.75C7.22386 3.75 7 3.97386 7 4.25C7 4.52614 7.22386 4.75 7.5 4.75H13.5C13.7761 4.75 14 4.52614 14 4.25C14 3.97386 13.7761 3.75 13.5 3.75H7.5Z M8 6.75C8 6.47386 8.22386 6.25 8.5 6.25H11.5C11.7761 6.25 12 6.47386 12 6.75C12 7.02614 11.7761 7.25 11.5 7.25H8.5C8.22386 7.25 8 7.02614 8 6.75Z M2 9.25C2 8.97386 2.22386 8.75 2.5 8.75H13.5C13.7761 8.75 14 8.97386 14 9.25C14 9.52614 13.7761 9.75 13.5 9.75H2.5C2.22386 9.75 2 9.52614 2 9.25Z M2 11.75C2 11.4739 2.22386 11.25 2.5 11.25H11.5C11.7761 11.25 12 11.4739 12 11.75C12 12.0261 11.7761 12.25 11.5 12.25H2.5C2.22386 12.25 2 12.0261 2 11.75Z"
+                    />
+                  </svg>
+                );
+              case "Assignee":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="nonzero"
+                      d="M8 9.49951C5.32109 9.49957 2.84382 10.93 1.50451 13.2501C1.43822 13.365 1.42025 13.5014 1.45457 13.6295C1.48888 13.7576 1.57267 13.8668 1.6875 13.9331C1.80235 13.9994 1.93883 14.0173 2.06691 13.983C2.195 13.9487 2.30419 13.8648 2.37048 13.75C3.53197 11.738 5.67677 10.4996 8 10.4995C10.3232 10.4995 12.4681 11.7379 13.6295 13.75C13.6958 13.8648 13.805 13.9487 13.9331 13.983C14.0612 14.0173 14.1976 13.9994 14.3125 13.9331C14.4273 13.8668 14.5111 13.7576 14.5454 13.6295C14.5797 13.5014 14.5618 13.365 14.4955 13.2501C13.1563 10.9299 10.679 9.49944 8 9.49951Z M8 1.5C5.52065 1.5 3.5 3.52065 3.5 6C3.5 8.47935 5.52065 10.4995 8 10.4995C10.4793 10.4995 12.5 8.47935 12.5 6C12.5 3.52065 10.4793 1.5 8 1.5ZM8 2.5C9.9389 2.5 11.5 4.0611 11.5 6C11.5 7.9389 9.9389 9.49951 8 9.49951C6.0611 9.49951 4.5 7.9389 4.5 6C4.5 4.0611 6.0611 2.5 8 2.5Z"
+                    />
+                  </svg>
+                );
+              case "Status":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="nonzero"
+                      d="M5.77625 6.75073C5.64385 6.74375 5.5141 6.78963 5.41553 6.8783C5.36671 6.92222 5.32702 6.97532 5.29873 7.03458C5.27044 7.09384 5.2541 7.1581 5.25064 7.22367C5.24719 7.28925 5.25668 7.35486 5.27858 7.41677C5.30048 7.47868 5.33437 7.53566 5.3783 7.58447L7.6283 10.0845C7.67519 10.1366 7.73251 10.1782 7.79655 10.2068C7.86058 10.2353 7.9299 10.25 8 10.25C8.0701 10.25 8.13942 10.2353 8.20345 10.2068C8.26749 10.1782 8.32481 10.1366 8.3717 10.0845L10.6217 7.58447C10.6656 7.53566 10.6995 7.47868 10.7214 7.41677C10.7433 7.35486 10.7528 7.28925 10.7494 7.22367C10.7459 7.1581 10.7296 7.09384 10.7013 7.03458C10.673 6.97532 10.6333 6.92222 10.5845 6.8783C10.5357 6.83437 10.4787 6.80048 10.4168 6.77858C10.3549 6.75668 10.2892 6.74719 10.2237 6.75064C10.1581 6.7541 10.0938 6.77044 10.0346 6.79873C9.97532 6.82702 9.92222 6.86671 9.8783 6.91553L8 9.00256L6.1217 6.91553C6.07777 6.86672 6.02464 6.82704 5.96537 6.79877C5.90609 6.77049 5.84183 6.75417 5.77625 6.75073Z M8 1.5C4.41604 1.5 1.5 4.41604 1.5 8C1.5 11.5839 4.41603 14.5 8 14.5C11.5839 14.5 14.5 11.5839 14.5 8C14.5 4.41603 11.5839 1.5 8 1.5ZM8 2.5C11.0435 2.5 13.5 4.95647 13.5 8C13.5 11.0435 11.0435 13.5 8 13.5C4.95647 13.5 2.5 11.0435 2.5 8C2.5 4.95647 4.95647 2.5 8 2.5Z"
+                    />
+                  </svg>
+                );
+              case "Attachments":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="nonzero"
+                      d="M9.5 1.5C9.36739 1.5 9.24021 1.55268 9.14645 1.64645C9.05268 1.74021 9 1.86739 9 2V5.5C9.00001 5.6326 9.0527 5.75977 9.14646 5.85354C9.24023 5.9473 9.3674 5.99999 9.5 6H13C13.1326 6 13.2598 5.94732 13.3536 5.85355C13.4473 5.75979 13.5 5.63261 13.5 5.5C13.5 5.36739 13.4473 5.24021 13.3536 5.14645C13.2598 5.05268 13.1326 5 13 5H10V2C10 1.86739 9.94732 1.74021 9.85355 1.64645C9.75979 1.55268 9.63261 1.5 9.5 1.5Z M3.5 1.5C2.95364 1.5 2.5 1.95364 2.5 2.5V13.5C2.50007 14.0463 2.95357 14.4999 3.49988 14.5C3.49984 14.5 3.49992 14.5 3.49988 14.5H12.5C13.0464 14.5 13.5 14.0464 13.5 13.5V5.5C13.5 5.36739 13.4473 5.24021 13.3536 5.14645L9.85355 1.64645C9.75979 1.55268 9.63261 1.5 9.5 1.5H3.5ZM3.5 2.5H9.29285L12.5 5.70715V13.5H3.50012L3.5 2.5Z"
+                    />
+                  </svg>
+                );
+              case "Attachment...":
+                return (
+                  <svg
+                    className="h-4 w-4 text-neutral-700"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      fillRule="nonzero"
+                      d="M4.24999 3C4.43937 3 4.6125 3.107 4.6972 3.27639L6.4472 6.77639C6.5707 7.02338 6.47058 7.32372 6.22359 7.44721C5.9766 7.57071 5.67627 7.4706 5.55277 7.22361L5.17327 6.4646H3.3267L2.9472 7.22361C2.82371 7.4706 2.52337 7.57071 2.27638 7.44721C2.02939 7.32372 1.92928 7.02338 2.05277 6.77639L3.80277 3.27639C3.88747 3.107 4.0606 3 4.24999 3ZM3.8267 5.4646H4.67327L4.24999 4.61803L3.8267 5.4646Z M7.5 3.75C7.22386 3.75 7 3.97386 7 4.25C7 4.52614 7.22386 4.75 7.5 4.75H13.5C13.7761 4.75 14 4.52614 14 4.25C14 3.97386 13.7761 3.75 13.5 3.75H7.5Z M8 6.75C8 6.47386 8.22386 6.25 8.5 6.25H11.5C11.7761 6.25 12 6.47386 12 6.75C12 7.02614 11.7761 7.25 11.5 7.25H8.5C8.22386 7.25 8 7.02614 8 6.75Z M2 9.25C2 8.97386 2.22386 8.75 2.5 8.75H13.5C13.7761 8.75 14 8.97386 14 9.25C14 9.52614 13.7761 9.75 13.5 9.75H2.5C2.22386 9.75 2 9.52614 2 9.25Z M2 11.75C2 11.4739 2.22386 11.25 2.5 11.25H11.5C11.7761 11.25 12 11.4739 12 11.75C12 12.0261 11.7761 12.25 11.5 12.25H2.5C2.22386 12.25 2 12.0261 2 11.75Z"
+                    />
+                  </svg>
+                );
+              default:
+                return (
+                  <span className="h-1 w-1 rounded-full bg-neutral-500" />
+                );
+            }
+          })();
+
+          const isAttachmentHeader = c.name === "Attachment...";
+
+          return (
+            <div className="flex h-8 items-center gap-1.5 pr-2 text-[12px] font-medium text-neutral-700">
+              <span className="shrink-0">{headerIcon}</span>
+              <span className="truncate">{c.name}</span>
+              {isAttachmentHeader && (
+                <span className="ml-1 pl-8 text-[16px] leading-none text-neutral-400">
+                  ⓘ
+                </span>
+              )}
+            </div>
+          );
+        },
+
         accessorFn: (row) => row.data[c.id] ?? "",
-        cell: ({ row, getValue, column }) => {
+
+        cell: ({ row, getValue, column, table }) => {
           const v = getValue() as string | number | "";
-          const isNumber = c.type === "NUMBER";
 
           const curRowIndex = row.index;
           const curColIndex = colIndexMap.get(column.id) ?? 0;
           const lastCol = editableColIds.length - 1;
+          const lastRow = table.getRowModel().rows.length - 1;
 
-          const move = (dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab") => {
+          const atFirstCell =
+            row.index === 0 && (colIndexMap.get(column.id) ?? 0) === 0;
+          const atLastCell =
+            row.index === lastRow &&
+            (colIndexMap.get(column.id) ?? 0) === lastCol;
+
+          const move = (
+            dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab"
+          ) => {
             let r = curRowIndex;
             let col = curColIndex;
 
             switch (dir) {
-              case "left":     col = Math.max(0, col - 1); break;
-              case "right":    col = Math.min(lastCol, col + 1); break;
-              case "up":       r = Math.max(0, r - 1); break;
-              case "down":     r = Math.min(table.getRowModel().rows.length - 1, r + 1); break;
+              case "left":
+                col = Math.max(0, col - 1);
+                break;
+              case "right":
+                col = Math.min(lastCol, col + 1);
+                break;
+              case "up":
+                r = Math.max(0, r - 1);
+                break;
+              case "down":
+                r = Math.min(table.getRowModel().rows.length - 1, r + 1);
+                break;
               case "tab":
-                if (col < lastCol) col++;
-                else { col = 0; r = Math.min(table.getRowModel().rows.length - 1, r + 1); }
+                if (col < lastCol) {
+                  col++;
+                } else {
+                  col = 0;
+                  r = Math.min(
+                    table.getRowModel().rows.length - 1,
+                    r + 1
+                  );
+                }
                 break;
               case "shiftTab":
-                if (col > 0) col--;
-                else { col = lastCol; r = Math.max(0, r - 1); }
+                if (col > 0) {
+                  col--;
+                } else {
+                  col = lastCol;
+                  r = Math.max(0, r - 1);
+                }
                 break;
             }
+
             pendingFocus.current = { rowIndex: r, colIndex: col };
-            // also try to focus immediately (with retry) — covers cases with no mutation
             focusCell(r, col);
           };
 
+          const isAttachmentPlaceholder = c.name === "Attachment...";
+
           return (
             <div
-              className="h-8"
+              className="group relative h-8"
               onMouseDown={(e) => {
-                // record destination first, then prevent fragile native focus
-                pendingFocus.current = { rowIndex: curRowIndex, colIndex: curColIndex };
+                pendingFocus.current = {
+                  rowIndex: curRowIndex,
+                  colIndex: curColIndex,
+                };
                 e.preventDefault();
-                // attempt immediate focus; if edit triggers a rerender, our effect will re-apply
                 focusCell(curRowIndex, curColIndex);
               }}
             >
+              {isAttachmentPlaceholder && v === "" && (
+                <div className="pointer-events-none absolute inset-0 flex items-center px-2 text-[12px] text-neutral-500 group-focus-within:hidden">
+                  <span className="truncate">Required field(s) are...</span>
+                  <span className="ml-auto pl-2 text-[12px] text-neutral-400">
+                    ⓘ
+                  </span>
+                </div>
+              )}
+
               <CellEditor
                 initial={v}
-                isNumber={isNumber}
+                isNumber={c.type === "NUMBER"}
                 onCommit={(finalVal) =>
                   updateCell.mutate({
                     rowId: row.original.id,
@@ -539,30 +659,53 @@ export default function BasePage() {
                 }
                 onMove={move}
                 inputRefCb={setCellRef(row.original.id, c.id)}
+                allowTabOut={atLastCell}
+                allowShiftTabOut={atFirstCell}
               />
             </div>
           );
         },
+
         size: c.ordinal === 0 ? 220 : 160,
         minSize: 120,
       });
     }
 
-    // trailing +
+    // 3. trailing "+" column that adds a new column
     defs.push({
       id: "__plus",
-      header: () => null,
-      cell: () => null,
-      size: 40,
-      minSize: 40,
       enableSorting: false,
       enableResizing: false,
+      size: 48,
+      minSize: 48,
+      header: () => {
+        return (
+          <button
+            className="flex h-8 w-full items-center justify-center rounded border border-dashed border-neutral-300 text-[16px] leading-none text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700 active:bg-neutral-100"
+            onClick={handleAddColumn}
+            disabled={createColumn.isPending}
+            title="Add column"
+          >
+            +
+          </button>
+        );
+      },
+      cell: () => null,
     });
 
     return defs;
-  }, [cols, updateCell, colIndexMap, editableColIds]);
+  }, [
+    unifiedCols,
+    colIndexMap,
+    editableColIds,
+    setCellRef,
+    updateCell,
+    handleAddColumn,
+    createColumn.isPending,
+  ]);
 
-  const table = useReactTable({
+  /* ---------------- build TanStack table instance ---------------- */
+  const table = useReactTable<RowRecord>({
     data: allRows,
     columns: columnDefs,
     state: { rowSelection },
@@ -572,279 +715,72 @@ export default function BasePage() {
     columnResizeMode: "onChange",
   });
 
-  const allSelected  = table.getIsAllRowsSelected();
-  const someSelected = table.getIsSomeRowsSelected();
+  const allSelected = table.getIsAllRowsSelected();
 
-  // fetch next page on scroll-near-bottom
+  /* ---------------- infinite scroll trigger ---------------- */
   const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onScroll = () => {
       if (!rowsQ.hasNextPage || rowsQ.isFetchingNextPage) return;
-      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 400;
+      const nearBottom =
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 400;
       if (nearBottom) void rowsQ.fetchNextPage();
     };
     el.addEventListener("scroll", onScroll);
     return () => el.removeEventListener("scroll", onScroll);
   }, [rowsQ.hasNextPage, rowsQ.isFetchingNextPage, rowsQ.fetchNextPage]);
 
-  // loading / error states
+  /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
     return <div className="p-6 text-sm">Loading…</div>;
   }
-  if (baseErr) return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
+  if (baseErr) {
+    return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
+  }
 
   if (!urlTableId) {
     return <div className="p-6 text-sm">Preparing your first table…</div>;
   }
 
   if (colsLoading) return <div className="p-6 text-sm">Loading…</div>;
-  if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
-  if (!base || !cols) return <div className="p-6">Not found.</div>;
+  if (colsErr)
+    return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
+  if (!base || !colsFromServer)
+    return <div className="p-6">Not found.</div>;
 
   /* ---------------- UI ---------------- */
-
   return (
     <div className="relative min-h-screen bg-white text-[13px] text-neutral-700">
       {/* LEFT skinny rail */}
-      <aside className="fixed left-0 top-0 z-30 flex h-screen w-14 flex-col items-center border-r border-neutral-200 bg-white">
-        <div className="mt-2">
-          <button className="flex h-8 w-8 items-center justify-center rounded hover:bg-neutral-100" title="Airtable">
-            <img src="/airtable.svg" alt="Airtable" className="h-5 w-5 opacity-90" />
-          </button>
-        </div>
-        <div className="mt-4 h-3.5 w-3.5 rounded-full border border-neutral-300" />
-        <div className="mt-4 flex flex-col gap-1.5">
-          <RailBtn title="Home">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M3 12l9-9 9 9" />
-              <path d="M9 21V9h6v12" />
-            </svg>
-          </RailBtn>
-          <RailBtn title="Bases">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-            </svg>
-          </RailBtn>
-        </div>
-        <div className="mt-auto mb-3">
-          <button className="flex h-7 w-7 items-center justify-center rounded-full bg-green-600 text-[12px] font-medium text-white" title="Account">
-            {base?.name?.[0]?.toUpperCase() ?? "U"}
-          </button>
-        </div>
-      </aside>
+      <LeftRail baseName={base?.name} />
 
       <div className={SIDEBAR_W_CLASS}>
-        {/* Header */}
-        <div className="border-b border-neutral-200 bg-white">
-          <div className="flex h-12 items-center justify-between px-4">
-            <div className="flex items-center gap-2">
-              <Link href="/" className="rounded px-1.5 py-1 text-neutral-500 hover:bg-neutral-100" title="Back">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-              </Link>
-              <span className="flex h-6 w-6 items-center justify-center rounded" style={{ backgroundColor: base.color ?? "#d4a257" }}>
-                <MaskIcon src="/airtable.svg" color="white" className="h-3.5 w-3.5" />
-              </span>
-              <div className="flex items-center gap-1 text-[14px] font-semibold">
-                {base.name}
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </div>
-              <div className="ml-6 flex items-center gap-6">
-                <button className="relative text-[13px] font-medium text-neutral-900">
-                  Data
-                  <div className="absolute bottom-[-13px] left-0 h-[2px] w-full bg-amber-600" />
-                </button>
-                <button className="text-[13px] text-neutral-500 hover:text-neutral-900">Automations</button>
-                <button className="text-[13px] text-neutral-500 hover:text-neutral-900">Interfaces</button>
-                <button className="text-[13px] text-neutral-500 hover:text-neutral-900">Forms</button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="rounded border border-neutral-300 px-3 py-1.5 text-[13px] hover:bg-neutral-50">Launch</button>
-              <button className="rounded bg-amber-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-amber-700">Share</button>
-            </div>
-          </div>
-        </div>
+        <BaseHeaderToolbar
+          baseName={base?.name}
+          baseColor={base?.color ?? "#d4a257"}
+          tables={(tablesQ.data ?? []).map((t) => ({
+            id: t.id,
+            name: t.name,
+          }))}
+          activeTableId={tableId}
+          onSwitchTable={switchToTable}
+          onAddTable={handleAddTable}
+          isCreatingTable={createTable.isPending}
+        />
 
-        {/* Toolbar */}
-        <div className="border-b border-neutral-200 bg-amber-50">
-          <div className="flex h-10 items-center justify-between px-4">
-            {/* Left: table tabs + add */}
-            <div className="flex items-center gap-2 overflow-x-auto py-1">
-              {(tablesQ.data ?? []).map((t) => {
-                const active = t.id === tableId;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => switchToTable(t.id)}
-                    className={[
-                      "whitespace-nowrap rounded px-2 py-1 text-[13px]",
-                      active
-                        ? "bg-amber-100 text-neutral-900 font-medium"
-                        : "text-neutral-600 hover:text-neutral-900",
-                    ].join(" ")}
-                    title={t.name ?? "Table"}
-                  >
-                    {t.name ?? "Table"}
-                  </button>
-                );
-              })}
+        <ViewHeaderBar />
 
-              <div className="mx-2 h-4 w-px shrink-0 bg-neutral-300" />
+        <DataGrid<RowRecord>
+          table={table}
+          allSelected={allSelected}
+          containerRef={containerRef}
+          onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
+          showLoadingMore={rowsQ.isFetchingNextPage}
+        />
 
-              <button
-                onClick={handleAddTable}
-                disabled={createTable.isPending}
-                className="flex items-center gap-1 rounded px-2 py-1 text-[13px] text-neutral-600 hover:text-neutral-900 disabled:opacity-60"
-                title="Create a new table"
-                type="button"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                {createTable.isPending ? "Creating…" : "Add or import"}
-              </button>
-            </div>
-
-            {/* Right: other toolbar buttons */}
-            <div className="flex items-center gap-1">
-              <ToolBtn>Hide fields</ToolBtn>
-              <ToolBtn>Filter</ToolBtn>
-              <ToolBtn>Group</ToolBtn>
-              <ToolBtn>Sort</ToolBtn>
-              <ToolBtn>Color</ToolBtn>
-              <ToolBtn>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="3" y1="6" x2="21" y2="6" />
-                  <line x1="3" y1="12" x2="21" y2="12" />
-                  <line x1="3" y1="18" x2="21" y2="18" />
-                </svg>
-              </ToolBtn>
-              <ToolBtn>Share and sync</ToolBtn>
-              <ToolBtn>
-                Tools
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </ToolBtn>
-              <button className="rounded px-2 py-1 text-[12px] text-neutral-600 hover:bg-amber-100">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="1" fill="currentColor" />
-                  <circle cx="12" cy="5" r="1" fill="currentColor" />
-                  <circle cx="12" cy="19" r="1" fill="currentColor" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Grid */}
-        <div ref={containerRef} className="overflow-auto">
-          <table className="w-full border-separate border-spacing-0 text-[13px]">
-            <thead>
-              {table.getHeaderGroups().map((hg) => (
-                <tr key={hg.id} className="group">
-                  {hg.headers.map((h, i) => (
-                    <th
-                      key={h.id}
-                      className={[
-                        "sticky top-0 z-10 border-b border-r border-neutral-200 px-2 py-0 text-left font-normal",
-                        allSelected ? "bg-blue-50" : "bg-neutral-50",
-                        i === 0 ? "w-12" : "",
-                      ].join(" ")}
-                      style={{ width: h.getSize() }}
-                    >
-                      <div className="flex h-8 items-center">
-                        {h.isPlaceholder
-                          ? null
-                          : flexRender(h.column.columnDef.header, h.getContext())}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-
-            <tbody>
-              {table.getRowModel().rows.map((r) => {
-                const selected = r.getIsSelected();
-                return (
-                  <tr key={r.id} className="group">
-                    {r.getVisibleCells().map((c, i) => {
-                      return (
-                        <td
-                          key={c.id}
-                          className={[
-                            "border-b border-r border-neutral-200 p-0",
-                            selected ? "bg-blue-50" : "bg-white",
-                            i === 0
-                              ? (selected ? "bg-blue-50" : "bg-neutral-50") +
-                                " text-center align-middle"
-                              : "",
-                          ].join(" ")}
-                          style={{ width: c.column.getSize() }}
-                        >
-                          {i === 0 ? (
-                            <div className="flex h-8 items-center justify-center">
-                              {flexRender(c.column.columnDef.cell, c.getContext())}
-                            </div>
-                          ) : (
-                            flexRender(c.column.columnDef.cell, c.getContext())
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-
-              {/* Airtable-style add row: plus only in the left gutter */}
-              <tr>
-                <td className="bg-neutral-50 border-b border-r border-neutral-200 p-0 w-12">
-                  <button
-                    onClick={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
-                    disabled={addRowMut.isPending}
-                    className="flex h-8 w-full items-center justify-center text-neutral-500 hover:bg-neutral-100 disabled:opacity-60"
-                    title="Add row"
-                    aria-label="Add row"
-                    type="button"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                  </button>
-                </td>
-                {table.getVisibleLeafColumns().slice(1).map((col) => {
-                  return (
-                    <td
-                      key={`stub-${col.id}`}
-                      className="border-b border-r border-neutral-200 p-0 bg-white"
-                      style={{ width: col.getSize() }}
-                    />
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
-
-          {rowsQ.isFetchingNextPage && (
-            <div className="p-3 text-center text-[12px] text-neutral-500">
-              Loading more…
-            </div>
-          )}
-        </div>
-
-        {/* Bottom-left count */}
+        {/* Bottom-left record count */}
         <div className="fixed bottom-4 left-20 flex items-center gap-2">
           <span className="ml-2 text-[12px] text-neutral-500">
             {table.getRowModel().rows.length} records
@@ -852,111 +788,5 @@ export default function BasePage() {
         </div>
       </div>
     </div>
-  );
-}
-
-/* Pretty checkbox with indeterminate */
-/* Airtable-style checkbox (matches size/colors/hover/focus) */
-function SelectableCheckbox({
-  checked,
-  indeterminate,
-  onChange,
-  className = "",
-}: {
-  checked: boolean;
-  indeterminate: boolean;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  className?: string;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-
-  const base =
-    "relative inline-flex h-5 w-5 items-center justify-center rounded-[4px] transition-colors " +
-    "shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)] outline-none " +
-    "focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[#166EE1] focus-within:ring-offset-white";
-
-  const on  = "bg-[#166EE1] ring-1 ring-[#166EE1] hover:bg-[#166EE1]";
-  const off = "bg-white ring-1 ring-neutral-300 hover:bg-neutral-50 hover:ring-neutral-400";
-
-  return (
-    <label className={["inline-flex items-center justify-center", className].join(" ")}>
-      <input ref={ref} type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
-      <span className={[base, checked || indeterminate ? on : off].join(" ")}>
-        {/* checkmark */}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          className={checked && !indeterminate ? "opacity-100" : "opacity-0"}
-          style={{ transition: "opacity 120ms" }}
-          fill="none"
-          stroke="white"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        {/* indeterminate bar */}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          className={indeterminate && !checked ? "opacity-100 absolute" : "opacity-0 absolute"}
-          style={{ transition: "opacity 120ms" }}
-          fill="none"
-          stroke="white"
-          strokeWidth="3"
-          strokeLinecap="round"
-          aria-hidden
-        >
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-      </span>
-    </label>
-  );
-}
-
-/* (Unused now) Older EditableCell kept for reference; can be removed */
-function EditableCell({
-  rowId,
-  columnId,
-  colType,
-  initial,
-  commit,
-}: {
-  rowId: string;
-  columnId: string;
-  colType: "TEXT" | "NUMBER";
-  initial: string | number | "";
-  commit: (args: {
-    rowId: string;
-    columnId: string;
-    value: string | number | "";
-    colType: "TEXT" | "NUMBER";
-  }) => void;
-}) {
-  const [val, setVal] = useState<string>(String(initial ?? ""));
-  useEffect(() => {
-    setVal(String(initial ?? ""));
-  }, [initial, rowId, columnId]);
-  const doCommit = () => {
-    commit({ rowId, columnId, value: val, colType });
-  };
-  return (
-    <input
-      className="block h-8 w-full px-2 text-[13px] outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-      type="text"
-      value={val}
-      onChange={(e) => setVal(e.target.value)}
-      onBlur={doCommit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === "Tab") doCommit();
-      }}
-    />
   );
 }
