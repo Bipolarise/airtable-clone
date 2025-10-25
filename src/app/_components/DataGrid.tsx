@@ -8,26 +8,30 @@ type DataGridProps<TData> = {
   allSelected: boolean;
   containerRef: RefObject<HTMLDivElement | null>;
   onAddRow: () => void;
+  onAddColumn: () => void;
   showLoadingMore?: boolean;
 };
 
-const CELL_W = 180; // other columns width
-const CELL_H = 32;  // other columns height
+const CELL_W = 180;
+const CELL_H = 32;
 
-const INDEX_W = 84; // numbers column width
-const INDEX_H = 36; // numbers column height
+const INDEX_W = 84;
+const INDEX_H = 36;
+
+// width for the trailing + header cell (94px wide now)
+const ADD_BTN_W = 94;
 
 export default function DataGrid<TData>({
   table,
   allSelected,
   containerRef,
   onAddRow,
+  onAddColumn,
   showLoadingMore,
 }: DataGridProps<TData>) {
   return (
     <div ref={containerRef} className="overflow-auto">
-      {/* center + cap width like Airtable */}
-      <div className="mr-auto max-w-[1120px] md:max-w-[1280px] pr-4">
+      <div className="mr-auto">
         <table className="w-auto border-separate border-spacing-0 text-[13px]">
           <thead>
             {table.getHeaderGroups().map((hg) => (
@@ -40,7 +44,7 @@ export default function DataGrid<TData>({
                       className={[
                         "sticky top-0 z-10 border-b border-neutral-200 px-2 py-0 text-left font-normal",
                         allSelected ? "bg-blue-50" : "bg-neutral-50",
-                        isIndex ? "" : "border-r", // keep: no right border on first (numbers) column
+                        isIndex ? "" : "border-r",
                       ].join(" ")}
                       style={{
                         width: isIndex ? INDEX_W : CELL_W,
@@ -49,16 +53,48 @@ export default function DataGrid<TData>({
                       }}
                     >
                       <div
-                        className="flex items-center"
+                        className="flex h-[36px] items-center"
                         style={{ paddingRight: i === 0 ? 15 : undefined }}
                       >
                         {h.isPlaceholder
                           ? null
-                          : flexRender(h.column.columnDef.header, h.getContext())}
+                          : flexRender(
+                              h.column.columnDef.header,
+                              h.getContext()
+                            )}
                       </div>
                     </th>
                   );
                 })}
+
+                {/* "+" header cell that fills like a normal header cell */}
+                <th
+                  className={[
+                    "sticky top-0 z-10",
+                    "border-b border-r border-neutral-200",
+                    "bg-white",
+                    "p-0 text-left font-normal",
+                  ].join(" ")}
+                  style={{
+                    width: ADD_BTN_W,
+                    minWidth: ADD_BTN_W,
+                    maxWidth: ADD_BTN_W,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={onAddColumn}
+                    title="Add column"
+                    className={[
+                      "flex h-[36px] w-full items-center justify-center",
+                      "text-[16px] leading-none text-neutral-700",
+                      "hover:bg-neutral-100 active:bg-neutral-200",
+                      "transition-colors",
+                    ].join(" ")}
+                  >
+                    +
+                  </button>
+                </th>
               </tr>
             ))}
           </thead>
@@ -75,10 +111,14 @@ export default function DataGrid<TData>({
                         key={c.id}
                         className={[
                           "border-b border-neutral-200 p-0",
-                          isIndex ? "" : "border-r", // keep: no right border on first column
+                          isIndex ? "" : "border-r",
                           selected ? "bg-blue-50" : "bg-white",
                           isIndex
-                            ? `${selected ? "bg-blue-50" : "bg-neutral-50"} text-center align-middle`
+                            ? `${
+                                selected
+                                  ? "bg-blue-50"
+                                  : "bg-neutral-50"
+                              } text-center align-middle`
                             : "",
                         ].join(" ")}
                         style={{
@@ -92,24 +132,32 @@ export default function DataGrid<TData>({
                             className="flex items-center justify-center"
                             style={{ height: INDEX_H, paddingRight: 15 }}
                           >
-                            {flexRender(c.column.columnDef.cell, c.getContext())}
+                            {flexRender(
+                              c.column.columnDef.cell,
+                              c.getContext()
+                            )}
                           </div>
                         ) : (
                           <div
                             className="flex items-center"
                             style={{ height: CELL_H }}
                           >
-                            {flexRender(c.column.columnDef.cell, c.getContext())}
+                            {flexRender(
+                              c.column.columnDef.cell,
+                              c.getContext()
+                            )}
                           </div>
                         )}
                       </td>
                     );
                   })}
+
+                  {/* no extra trailing <td> for the + column in body rows */}
                 </tr>
               );
             })}
 
-            {/* Full-width + row (same base color, darker on hover) */}
+            {/* Add row full-width bar */}
             <tr>
               <td
                 colSpan={table.getVisibleLeafColumns().length}
@@ -119,8 +167,8 @@ export default function DataGrid<TData>({
                   onClick={onAddRow}
                   type="button"
                   aria-label="Add row"
-                  className="group flex w-full items-center bg-white hover:bg-neutral-50 transition-colors"
-                  style={{ height: CELL_H, paddingLeft: 15 }} // keep 32px for the add-row
+                  className="group flex w-full items-center bg-white transition-colors hover:bg-neutral-50"
+                  style={{ height: CELL_H, paddingLeft: 15 }}
                 >
                   <span className="pl-3 pr-2 text-neutral-500 group-hover:text-neutral-700">
                     <svg

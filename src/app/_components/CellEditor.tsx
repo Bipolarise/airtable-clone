@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, {
+  useEffect,
+  useState,
+  useImperativeHandle,
+  forwardRef,
+} from "react";
 
-export default function CellEditor({
-  initial,
-  isNumber,
-  onCommit,
-  onMove,
-  inputRefCb,
-  allowTabOut = false,
-  allowShiftTabOut = false,
-}: {
+export type CellEditorHandle = {
+  commitNow: () => void;
+  getValue: () => string | number | "";
+};
+
+type Props = {
   initial: string | number | "";
   isNumber: boolean;
   onCommit: (val: string | number | "") => void;
@@ -18,80 +20,101 @@ export default function CellEditor({
     dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab"
   ) => void;
   inputRefCb?: (el: HTMLInputElement | null) => void;
+  allowTabOut?: boolean;
+  allowShiftTabOut?: boolean;
+};
 
-  // NEW props we added:
-  allowTabOut?: boolean;        // if true, let normal Tab leave this cell naturally
-  allowShiftTabOut?: boolean;   // if true, let Shift+Tab leave this cell naturally
-}) {
+const CellEditor = forwardRef<CellEditorHandle, Props>(function CellEditor(
+  {
+    initial,
+    isNumber,
+    onCommit,
+    onMove,
+    inputRefCb,
+    allowTabOut = false,
+    allowShiftTabOut = false,
+  },
+  ref
+) {
+  // local draft state
   const [val, setVal] = useState<string>(String(initial ?? ""));
 
+  // sync with parent when parent value changes (optimistic updates etc)
   useEffect(() => {
     setVal(String(initial ?? ""));
   }, [initial]);
 
-  const commit = () => {
-    const next = isNumber ? (val === "" ? "" : Number(val)) : val;
-    if (String(next) === String(initial ?? "")) return;
-    onCommit(next);
+  // final typed value
+  const buildFinalVal = () => {
+    return isNumber ? (val === "" ? "" : Number(val)) : val;
   };
 
+  // call onCommit if changed
+  const commitIfChanged = () => {
+    const next = buildFinalVal();
+    if (String(next) !== String(initial ?? "")) {
+      onCommit(next);
+    }
+  };
+
+  // expose imperative API if parent ever needs it
+  useImperativeHandle(ref, () => ({
+    commitNow: commitIfChanged,
+    getValue: buildFinalVal,
+  }));
+
+  // keyboard nav
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Handle Tab / Shift+Tab navigation
     if (e.key === "Tab") {
       const isShift = e.shiftKey;
 
-      // Shift+Tab case
       if (isShift) {
         if (!allowShiftTabOut) {
-          // we're controlling grid navigation
           e.preventDefault();
-          commit();
+          commitIfChanged();
           onMove?.("shiftTab");
         } else {
-          // let browser move focus out of the grid
-          commit();
+          commitIfChanged();
         }
         return;
       }
 
-      // Plain Tab
       if (!allowTabOut) {
         e.preventDefault();
-        commit();
+        commitIfChanged();
         onMove?.("tab");
       } else {
-        commit();
+        commitIfChanged();
       }
       return;
     }
 
-    // Arrow / Enter keys
     if (e.key === "ArrowLeft") {
       e.preventDefault();
-      commit();
+      commitIfChanged();
       onMove?.("left");
       return;
     }
     if (e.key === "ArrowRight") {
       e.preventDefault();
-      commit();
+      commitIfChanged();
       onMove?.("right");
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      commit();
+      commitIfChanged();
       onMove?.("up");
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      commit();
+      commitIfChanged();
       onMove?.("down");
       return;
     }
     if (e.key === "Enter") {
-      commit();
+      commitIfChanged();
     }
   };
 
@@ -111,15 +134,17 @@ export default function CellEditor({
         focus:ring-inset
       "
       style={{
-        boxSizing: "border-box", // keep focus ring hugging the box
+        boxSizing: "border-box",
         position: "relative",
-        top: "-2px", // lift the ring up ~2px so it visually centers in the row
+        top: "-2px",
       }}
       type={isNumber ? "number" : "text"}
       value={val}
       onChange={(e) => setVal(e.target.value)}
-      onBlur={commit}
+      onBlur={commitIfChanged} // commit when you LEAVE the cell
       onKeyDown={onKeyDown}
     />
   );
-}
+});
+
+export default CellEditor;
