@@ -198,7 +198,9 @@ export default function BasePage() {
         requestAnimationFrame(tryFocus);
       }
     };
-    requestAnimationFrame(() => requestAnimationFrame(tryFocus));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(tryFocus)
+    );
   };
 
   /* ---------------- mutations ---------------- */
@@ -206,19 +208,21 @@ export default function BasePage() {
   // keep track of last committed value per cell so we don't spam dupes
   const lastCommittedRef = useRef<Record<string, string | number | "">>({});
 
-  // store "there's a cell that needs to be saved"
+  // local queue of unsent commits
   type PendingCommit = {
     rowId: string;
     columnId: string;
     colType: "TEXT" | "NUMBER";
     value: string | number | "";
   };
-
   const pendingQueueRef = useRef<PendingCommit[]>([]);
+
+  // state to trigger flush effect
+  const [flushTick, setFlushTick] = useState(0);
 
   const updateCell = api.row.updateCell.useMutation({
     onMutate: async (vars) => {
-      // cancel inflight fetches
+      // cancel inflight fetches so we can patch optimistically
       await utils.row.list.cancel({ tableId, limit: 200 });
 
       const prev = utils.row.list.getInfiniteData({ tableId, limit: 200 });
@@ -261,7 +265,7 @@ export default function BasePage() {
     },
   });
 
-  // Instead of mutating immediately (which steals focus mid-click), we just record it here.
+  // Queue a commit and trigger flushTick so the effect runs
   const scheduleCommit = (
     rowId: string,
     columnId: string,
@@ -270,7 +274,7 @@ export default function BasePage() {
   ) => {
     const cellKey = rowId + ":" + columnId;
 
-    // If this value is the same as the last one we *already sent*, skip.
+    // Already sent this value?
     if (
       String(lastCommittedRef.current[cellKey] ?? "") ===
       String(value ?? "")
@@ -278,7 +282,7 @@ export default function BasePage() {
       return;
     }
 
-    // If the *exact same* commit is already queued and unsent, don't enqueue a duplicate.
+    // Already queued this exact change?
     const alreadyQueued = pendingQueueRef.current.some(
       (c) =>
         c.rowId === rowId &&
@@ -287,15 +291,17 @@ export default function BasePage() {
     );
     if (alreadyQueued) return;
 
+    // queue this edit
     pendingQueueRef.current.push({ rowId, columnId, colType, value });
+
+    // tell React "we have stuff to flush"
+    setFlushTick((x) => x + 1);
   };
 
-  // 🔑 After every render, if there's a pending commit AND focus is already
-  // sitting in some cell <input>, then it's safe to fire the mutation.
+  // Whenever flushTick changes, try to send everything in pendingQueueRef
   useEffect(() => {
     if (pendingQueueRef.current.length === 0) return;
 
-    // This will send every queued commit and mark them as sent.
     const flushAll = () => {
       if (pendingQueueRef.current.length === 0) return;
 
@@ -306,7 +312,7 @@ export default function BasePage() {
         const { rowId, columnId, colType, value } = commit;
         const cellKey = rowId + ":" + columnId;
 
-        // record last committed so we don't resend same value later
+        // remember last committed so we don't resend dupes later
         lastCommittedRef.current[cellKey] = value;
 
         updateCell.mutate({
@@ -325,17 +331,15 @@ export default function BasePage() {
       (active as HTMLInputElement).type !== "checkbox";
 
     if (isCellInput) {
-      // User is already focused in a new cell input, safe to flush now.
+      // User already focused in another cell; safe to flush instantly
       flushAll();
     } else {
-      // No focused text cell (maybe clicked whitespace / header / checkbox).
-      // Give the browser one more frame to settle focus, then flush anyway
-      // so we don't lose data.
+      // User clicked whitespace/header/etc. Let focus settle 1 frame then flush.
       requestAnimationFrame(() => {
         flushAll();
       });
     }
-  });
+  }, [flushTick, updateCell]);
 
   /* ---------------- row.create mutation ---------------- */
 
@@ -669,11 +673,11 @@ export default function BasePage() {
                 if (col < lastCol) {
                   col++;
                 } else {
-                  col = 0;
-                  r = Math.min(
-                    table.getRowModel().rows.length - 1,
-                    r + 1
-                  );
+                    col = 0;
+                    r = Math.min(
+                      table.getRowModel().rows.length - 1,
+                      r + 1
+                    );
                 }
                 break;
               case "shiftTab":
@@ -704,8 +708,7 @@ export default function BasePage() {
               )}
 
               <CellEditor
-                // IMPORTANT: no `key={row.id + ":" + c.id}`.
-                // Let React keep this input mounted so focus isn't blown away.
+                // IMPORTANT: no key={row.id + ":" + c.id}.
                 initial={v}
                 isNumber={c.type === "NUMBER"}
                 onCommit={(finalVal) => {

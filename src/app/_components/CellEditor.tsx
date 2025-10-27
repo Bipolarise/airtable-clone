@@ -57,7 +57,7 @@ const CellEditor = forwardRef<CellEditorHandle, Props>(function CellEditor(
     }
   };
 
-  // expose imperative API if parent ever needs it
+  // expose imperative API
   useImperativeHandle(ref, () => ({
     commitNow: commitIfChanged,
     getValue: buildFinalVal,
@@ -141,7 +141,7 @@ const CellEditor = forwardRef<CellEditorHandle, Props>(function CellEditor(
       type={isNumber ? "number" : "text"}
       value={val}
       onChange={(e) => setVal(e.target.value)}
-      onBlur={commitIfChanged} // commit when you LEAVE the cell
+      onBlur={commitIfChanged}
       onKeyDown={onKeyDown}
     />
   );
