@@ -43,6 +43,14 @@ export default function BasePage() {
   const tableId = urlTableId;
   const utils = api.useUtils();
 
+  /* ---------------- bulkAdd 100k rows mutation ---------------- */
+  const bulkAdd = api.row.bulkAddDemo.useMutation({
+    onSuccess: () => {
+      // After bulk insert, refetch the first page so the UI reflects new data
+      void utils.row.list.invalidate({ tableId, limit: 200 });
+    },
+  });
+
   /* ---------------- Base + tables ---------------- */
   const { data: base, isLoading: baseLoading, error: baseErr } =
     api.base.byId.useQuery({ id: String(baseId) });
@@ -145,7 +153,7 @@ export default function BasePage() {
       .sort((a, b) => a.ordinal - b.ordinal);
   }, [localCols, colsFromServer]);
 
-  // rows (infinite)
+  // rows (infinite w/ cursor)
   const rowsQ = api.row.list.useInfiniteQuery(
     { tableId, limit: 200 },
     {
@@ -161,7 +169,7 @@ export default function BasePage() {
 
   /* ---------------- selection state ---------------- */
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
-  
+
   /* ---------------- focused cell tracking ---------------- */
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
 
@@ -189,56 +197,60 @@ export default function BasePage() {
   );
 
   // programmatic keyboard nav focus with retry for re-renders
-  const focusCell = useCallback((rowIndex: number, colIndex: number) => {
-    const r = table.getRowModel().rows[rowIndex];
-    const cId = editableColIds[colIndex];
-    
-    if (!r || !cId) return;
+  const tableRef = useRef<ReturnType<typeof useReactTable<RowRecord>> | null>(
+    null
+  );
 
-    const cellKey = `${r.original.id}:${cId}`;
-    
-    // Mark this cell as the one that should auto-focus
-    setFocusedCellKey(cellKey);
-    
-    const el = cellRefs.current[cellKey];
-    
-    if (!el) {
-      // If element not ready, wait and try once more
-      requestAnimationFrame(() => {
-        const el = cellRefs.current[cellKey];
-        if (el) {
-          el.focus({ preventScroll: true });
-          el.select();
-        }
-      });
-      return;
-    }
-    
-    // Element found immediately
-    el.focus({ preventScroll: true });
-    el.select();
-    
-    // Aggressive re-focus with FRESH element lookups (element may be replaced by re-renders)
-    [50, 100, 150, 200, 250, 300, 400, 500].forEach(delay => {
-      setTimeout(() => {
-        // FRESH lookup - don't use stale 'el' reference
-        const freshEl = cellRefs.current[cellKey];
-        if (!freshEl) return;
-        
-        const isFocused = document.activeElement === freshEl;
-        
-        if (!isFocused && document.body.contains(freshEl)) {
-          try {
-            freshEl.focus({ preventScroll: true });
-            freshEl.select();
-          } catch {
-            // Silently fail
+  const focusCell = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      const r = table.getRowModel().rows[rowIndex];
+      const cId = editableColIds[colIndex];
+
+      if (!r || !cId) return;
+
+      const cellKey = `${r.original.id}:${cId}`;
+
+      // Mark this cell as the one that should auto-focus
+      setFocusedCellKey(cellKey);
+
+      const el = cellRefs.current[cellKey];
+
+      if (!el) {
+        // If element not ready, wait and try once more
+        requestAnimationFrame(() => {
+          const el2 = cellRefs.current[cellKey];
+          if (el2) {
+            el2.focus({ preventScroll: true } as any);
+            el2.select();
           }
-        }
-      }, delay);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editableColIds]);
+        });
+        return;
+      }
+
+      // Element found immediately
+      el.focus({ preventScroll: true } as any);
+      el.select();
+
+      // extra safety refocus loop
+      [50, 100, 150, 200, 250, 300, 400, 500].forEach((delay) => {
+        setTimeout(() => {
+          const freshEl = cellRefs.current[cellKey];
+          if (!freshEl) return;
+
+          const isFocused = document.activeElement === freshEl;
+          if (!isFocused && document.body.contains(freshEl)) {
+            try {
+              freshEl.focus({ preventScroll: true } as any);
+              freshEl.select();
+            } catch {
+              // swallow
+            }
+          }
+        }, delay);
+      });
+    },
+    [editableColIds]
+  );
 
   /* ---------------- mutations ---------------- */
 
@@ -303,37 +315,40 @@ export default function BasePage() {
   });
 
   // Queue a commit and trigger flushTick so the effect runs
-  const scheduleCommit = useCallback((
-    rowId: string,
-    columnId: string,
-    colType: "TEXT" | "NUMBER",
-    value: string | number | ""
-  ) => {
-    const cellKey = rowId + ":" + columnId;
+  const scheduleCommit = useCallback(
+    (
+      rowId: string,
+      columnId: string,
+      colType: "TEXT" | "NUMBER",
+      value: string | number | ""
+    ) => {
+      const cellKey = rowId + ":" + columnId;
 
-    // Already sent this value?
-    if (
-      String(lastCommittedRef.current[cellKey] ?? "") ===
-      String(value ?? "")
-    ) {
-      return;
-    }
+      // Already sent this value?
+      if (
+        String(lastCommittedRef.current[cellKey] ?? "") ===
+        String(value ?? "")
+      ) {
+        return;
+      }
 
-    // Already queued this exact change?
-    const alreadyQueued = pendingQueueRef.current.some(
-      (c) =>
-        c.rowId === rowId &&
-        c.columnId === columnId &&
-        String(c.value ?? "") === String(value ?? "")
-    );
-    if (alreadyQueued) return;
+      // Already queued this exact change?
+      const alreadyQueued = pendingQueueRef.current.some(
+        (c) =>
+          c.rowId === rowId &&
+          c.columnId === columnId &&
+          String(c.value ?? "") === String(value ?? "")
+      );
+      if (alreadyQueued) return;
 
-    // queue this edit
-    pendingQueueRef.current.push({ rowId, columnId, colType, value });
+      // queue this edit
+      pendingQueueRef.current.push({ rowId, columnId, colType, value });
 
-    // tell React "we have stuff to flush"
-    setFlushTick((x) => x + 1);
-  }, []);
+      // tell React "we have stuff to flush"
+      setFlushTick((x) => x + 1);
+    },
+    []
+  );
 
   // Whenever flushTick changes, try to send everything in pendingQueueRef
   useEffect(() => {
@@ -368,10 +383,10 @@ export default function BasePage() {
       (active as HTMLInputElement).type !== "checkbox";
 
     if (isCellInput) {
-      // User already focused in another cell; safe to flush instantly
+      // User is in another cell; flush instantly
       flushAll();
     } else {
-      // User clicked whitespace/header/etc. Let focus settle 1 frame then flush.
+      // let focus settle then flush
       requestAnimationFrame(() => {
         flushAll();
       });
@@ -745,7 +760,7 @@ export default function BasePage() {
               )}
 
               <CellEditor
-                // Stable key to prevent unmounting during re-renders
+                // Stable key so React reuses the same input & we don't blow focus
                 key={`${row.original.id}:${c.id}`}
                 initial={v}
                 isNumber={c.type === "NUMBER"}
@@ -761,7 +776,9 @@ export default function BasePage() {
                 inputRefCb={setCellRef(row.original.id, c.id)}
                 allowTabOut={atLastCell}
                 allowShiftTabOut={atFirstCell}
-                shouldAutoFocus={focusedCellKey === `${row.original.id}:${c.id}`}
+                shouldAutoFocus={
+                  focusedCellKey === `${row.original.id}:${c.id}`
+                }
               />
             </div>
           );
@@ -794,12 +811,15 @@ export default function BasePage() {
     columnResizeMode: "onChange",
   });
 
+  // let focusCell see the current table (optional safety)
+  tableRef.current = table;
+
   const allSelected = table.getIsAllRowsSelected();
 
   /* ---------------- infinite scroll trigger ---------------- */
-  const containerRef = useRef<HTMLDivElement>(null);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = containerRef.current;
+    const el = gridScrollRef.current;
     if (!el) return;
     const onScroll = () => {
       if (!rowsQ.hasNextPage || rowsQ.isFetchingNextPage) return;
@@ -831,11 +851,20 @@ export default function BasePage() {
 
   /* ---------------- UI ---------------- */
   return (
-    <div className="relative min-h-screen bg-white text-[13px] text-neutral-700">
+    // full app layout: NO window scroll, only grid scrolls
+    <div className="relative flex h-screen flex-row overflow-hidden bg-white text-[13px] text-neutral-700">
       {/* LEFT skinny rail */}
       <LeftRail baseName={base?.name} />
 
-      <div className={SIDEBAR_W_CLASS}>
+      {/* main content to the right of rail */}
+      <div
+        className={
+          SIDEBAR_W_CLASS +
+          // column layout, fills remaining width/height
+          " flex h-full min-w-0 flex-1 flex-col overflow-hidden"
+        }
+      >
+        {/* top bar (base name, tables, etc) */}
         <BaseHeaderToolbar
           baseName={base?.name}
           baseColor={base?.color ?? "#d4a257"}
@@ -849,22 +878,41 @@ export default function BasePage() {
           isCreatingTable={createTable.isPending}
         />
 
-        <ViewHeaderBar />
-
-        <DataGrid<RowRecord>
-          table={table}
-          allSelected={allSelected}
-          containerRef={containerRef}
-          onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
-          onAddColumn={handleAddColumn}
-          showLoadingMore={rowsQ.isFetchingNextPage}
+        {/* view header row (+100k rows, hide fields, etc) */}
+        <ViewHeaderBar
+          onAddDemoRows={() => {
+            if (!tableId || bulkAdd.isPending) return;
+            bulkAdd.mutate({ tableId, count: 100_000 });
+          }}
+          isAddingDemoRows={bulkAdd.isPending}
         />
 
-        {/* Bottom-left record count */}
-        <div className="fixed bottom-4 left-20 flex items-center gap-2">
-          <span className="ml-2 text-[12px] text-neutral-500">
-            {table.getRowModel().rows.length} records
-          </span>
+        {/* body area: header above, footer below, grid scrolls in the middle */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Scroll container: ONLY this div scrolls vertically */}
+          <div
+            ref={gridScrollRef}
+            className="min-h-0 flex-1 overflow-auto"
+          >
+            <DataGrid<RowRecord>
+              table={table}
+              allSelected={allSelected}
+              containerRef={gridScrollRef}
+              onAddRow={() =>
+                addRowMut.mutate({ tableId, data: makeEmptyRow() })
+              }
+              onAddColumn={handleAddColumn}
+              showLoadingMore={rowsQ.isFetchingNextPage}
+            />
+          </div>
+
+          {/* footer locked at bottom */}
+          <div className="flex items-center gap-2 border-t border-neutral-200 px-4 py-2 text-[12px] text-neutral-500">
+            <span>{table.getRowModel().rows.length} records</span>
+            {rowsQ.isFetchingNextPage && (
+              <span className="text-neutral-400">Loading more…</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
