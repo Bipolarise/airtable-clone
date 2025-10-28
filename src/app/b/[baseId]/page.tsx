@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import SelectableCheckbox from "~/app/_components/SelectableCheckbox";
 import CellEditor from "~/app/_components/CellEditor";
@@ -161,6 +161,9 @@ export default function BasePage() {
 
   /* ---------------- selection state ---------------- */
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
+  
+  /* ---------------- focused cell tracking ---------------- */
+  const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
 
   /* ---------------- grid helpers ---------------- */
 
@@ -178,30 +181,64 @@ export default function BasePage() {
 
   // refs for focusing cells by [rowId:colId]
   const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const setCellRef =
+  const setCellRef = useCallback(
     (rowId: string, colId: string) => (el: HTMLInputElement | null) => {
       cellRefs.current[`${rowId}:${colId}`] = el;
-    };
+    },
+    []
+  );
 
-  // programmatic keyboard nav focus
-  const focusCell = (rowIndex: number, colIndex: number) => {
-    const tryFocus = () => {
-      const r = table.getRowModel().rows[rowIndex];
-      const cId = editableColIds[colIndex];
-      if (!r || !cId) return;
+  // programmatic keyboard nav focus with retry for re-renders
+  const focusCell = useCallback((rowIndex: number, colIndex: number) => {
+    const r = table.getRowModel().rows[rowIndex];
+    const cId = editableColIds[colIndex];
+    
+    if (!r || !cId) return;
 
-      const el = cellRefs.current[`${r.original.id}:${cId}`];
-      if (el) {
-        el.focus({ preventScroll: true } as any);
-        el.select();
-      } else {
-        requestAnimationFrame(tryFocus);
-      }
-    };
-    requestAnimationFrame(() =>
-      requestAnimationFrame(tryFocus)
-    );
-  };
+    const cellKey = `${r.original.id}:${cId}`;
+    
+    // Mark this cell as the one that should auto-focus
+    setFocusedCellKey(cellKey);
+    
+    const el = cellRefs.current[cellKey];
+    
+    if (!el) {
+      // If element not ready, wait and try once more
+      requestAnimationFrame(() => {
+        const el = cellRefs.current[cellKey];
+        if (el) {
+          el.focus({ preventScroll: true });
+          el.select();
+        }
+      });
+      return;
+    }
+    
+    // Element found immediately
+    el.focus({ preventScroll: true });
+    el.select();
+    
+    // Aggressive re-focus with FRESH element lookups (element may be replaced by re-renders)
+    [50, 100, 150, 200, 250, 300, 400, 500].forEach(delay => {
+      setTimeout(() => {
+        // FRESH lookup - don't use stale 'el' reference
+        const freshEl = cellRefs.current[cellKey];
+        if (!freshEl) return;
+        
+        const isFocused = document.activeElement === freshEl;
+        
+        if (!isFocused && document.body.contains(freshEl)) {
+          try {
+            freshEl.focus({ preventScroll: true });
+            freshEl.select();
+          } catch {
+            // Silently fail
+          }
+        }
+      }, delay);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editableColIds]);
 
   /* ---------------- mutations ---------------- */
 
@@ -266,7 +303,7 @@ export default function BasePage() {
   });
 
   // Queue a commit and trigger flushTick so the effect runs
-  const scheduleCommit = (
+  const scheduleCommit = useCallback((
     rowId: string,
     columnId: string,
     colType: "TEXT" | "NUMBER",
@@ -296,7 +333,7 @@ export default function BasePage() {
 
     // tell React "we have stuff to flush"
     setFlushTick((x) => x + 1);
-  };
+  }, []);
 
   // Whenever flushTick changes, try to send everything in pendingQueueRef
   useEffect(() => {
@@ -673,11 +710,11 @@ export default function BasePage() {
                 if (col < lastCol) {
                   col++;
                 } else {
-                    col = 0;
-                    r = Math.min(
-                      table.getRowModel().rows.length - 1,
-                      r + 1
-                    );
+                  col = 0;
+                  r = Math.min(
+                    table.getRowModel().rows.length - 1,
+                    r + 1
+                  );
                 }
                 break;
               case "shiftTab":
@@ -708,7 +745,8 @@ export default function BasePage() {
               )}
 
               <CellEditor
-                // IMPORTANT: no key={row.id + ":" + c.id}.
+                // Stable key to prevent unmounting during re-renders
+                key={`${row.original.id}:${c.id}`}
                 initial={v}
                 isNumber={c.type === "NUMBER"}
                 onCommit={(finalVal) => {
@@ -723,6 +761,7 @@ export default function BasePage() {
                 inputRefCb={setCellRef(row.original.id, c.id)}
                 allowTabOut={atLastCell}
                 allowShiftTabOut={atFirstCell}
+                shouldAutoFocus={focusedCellKey === `${row.original.id}:${c.id}`}
               />
             </div>
           );
@@ -741,6 +780,7 @@ export default function BasePage() {
     setCellRef,
     focusCell,
     scheduleCommit,
+    focusedCellKey,
   ]);
 
   /* ---------------- build TanStack table instance ---------------- */
