@@ -21,7 +21,7 @@ export default function Sidebar() {
   // NEW:
   const handleCreate = useCallback(async () => {
     await createBase({
-      name: "Untitled base",
+      name: "Untitled Base",
       // optionally pass icon/color if your mutation supports it
       // icon: "🟨",
       // color: "#7c3aed",

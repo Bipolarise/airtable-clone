@@ -27,45 +27,30 @@ export default function BaseHeaderToolbar({
       {/* Header */}
       <div className="border-b border-neutral-200 bg-white">
         {/* 3-column grid: left (1fr) | center (auto) | right (1fr) */}
-        <div className="grid h-12 grid-cols-[1fr_auto_1fr] items-center px-4">
-          {/* LEFT: back + base */}
+        <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center px-4">
+          {/* LEFT: base (no back button) */}
           <div className="flex items-center gap-2">
-            <Link
-              href="/"
-              className="rounded px-1.5 py-1 text-neutral-500 hover:bg-neutral-100"
-              title="Back"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </Link>
-
             <span
-              className="flex h-6 w-6 items-center justify-center rounded"
+              className="flex h-8 w-8 items-center justify-center rounded"
               style={{ backgroundColor: baseColor }}
             >
               <MaskIcon
                 src="/airtable.svg"
                 color="white"
-                className="h-3.5 w-3.5"
+                className="h-5.5 w-5.5"
               />
             </span>
 
-            <div className="flex items-center gap-1 text-[14px] font-semibold">
+            <div className="flex items-center gap-1 text-[17px] font-bold text-neutral-900 leading-none">
               {baseName}
               <svg
-                width="12"
-                height="12"
+                width="18"
+                height="18"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1"
+                className="text-neutral-900"
               >
                 <polyline points="6 9 12 15 18 9" />
               </svg>
@@ -76,7 +61,7 @@ export default function BaseHeaderToolbar({
           <nav className="flex items-center justify-center gap-6">
             <button className="relative text-[13px] font-medium text-neutral-900">
               Data
-              <div className="absolute bottom-[-13px] left-0 h-[2px] w-full bg-amber-600" />
+              <div className="absolute bottom-[-18px] left-0 h-[2px] w-full bg-amber-600" />
             </button>
             <button className="text-[13px] text-neutral-500 hover:text-neutral-900">
               Automations
