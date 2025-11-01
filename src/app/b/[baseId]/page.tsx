@@ -1,7 +1,14 @@
 // src/app/b/[baseId]/page.tsx
 "use client";
 
-import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  startTransition,
+} from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import SelectableCheckbox from "~/app/_components/SelectableCheckbox";
 import CellEditor from "~/app/_components/CellEditor";
@@ -43,9 +50,18 @@ export default function BasePage() {
   const { baseId } = useParams<{ baseId: string }>();
   const searchParams = useSearchParams();
   const urlTableId = searchParams.get("t") ?? "";
-  const tableId = urlTableId;
 
   const utils = api.useUtils();
+
+  // UI-controlled active table for smooth switches (decoupled from URL)
+  const [activeTableId, setActiveTableId] = useState<string>(urlTableId);
+
+  // adopt URL on first mount (don’t override if we already have UI state)
+  useEffect(() => {
+    setActiveTableId((prev) => (prev ? prev : urlTableId));
+  }, [urlTableId]);
+
+  const tableId = activeTableId;
 
   /* ---------------- search state ---------------- */
   const [searchText, setSearchText] = useState("");
@@ -77,6 +93,18 @@ export default function BasePage() {
     { enabled: !!baseId }
   );
 
+  // prefetch meta + first page of rows to avoid blank states
+  const prefetchTable = useCallback(
+    async (id: string, search = "") => {
+      const qRows = { tableId: id, limit: 200, search };
+      await Promise.all([
+        utils.table.meta.prefetch({ tableId: id }),
+        utils.row.list.prefetchInfinite(qRows),
+      ]);
+    },
+    [utils]
+  );
+
   const createTable = api.table.create.useMutation({
     onMutate: async (vars) => {
       const q = { baseId: String(baseId) } as const;
@@ -98,13 +126,19 @@ export default function BasePage() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) utils.table.list.setData(ctx.q, ctx.prev);
     },
-    onSuccess: (real, _vars, ctx) => {
+    onSuccess: async (real, _vars, ctx) => {
       if (ctx) {
         utils.table.list.setData(ctx.q, (old) =>
           (old ?? []).map((t) => (t.id === ctx.tempId ? real : t))
         );
       }
-      if (baseId) router.replace(`/b/${String(baseId)}?t=${real.id}`);
+
+      // Warm the cache, then swap UI, then sync URL
+      await prefetchTable(real.id, debouncedSearch);
+      startTransition(() => {
+        setActiveTableId(real.id);
+        if (baseId) router.replace(`/b/${String(baseId)}?t=${real.id}`);
+      });
     },
     onSettled: (_res, _err, _vars, ctx) => {
       if (ctx) void utils.table.list.invalidate(ctx.q);
@@ -118,26 +152,40 @@ export default function BasePage() {
     return `Table ${n}`;
   };
 
-  const switchToTable = (id: string) => {
-    if (!baseId) return;
-    router.replace(`/b/${String(baseId)}?t=${id}`);
-  };
+  // Soft switch (no flicker): prefetch -> setActive -> update URL
+  const switchToTable = useCallback(
+    async (id: string) => {
+      if (!baseId || id === activeTableId) return;
+      await prefetchTable(id, debouncedSearch);
+      startTransition(() => {
+        setActiveTableId(id);
+        router.replace(`/b/${String(baseId)}?t=${id}`);
+      });
+    },
+    [baseId, activeTableId, prefetchTable, debouncedSearch, router]
+  );
 
-  // bootstrap first table if needed
+  // bootstrap first table (prefetch -> setActive -> URL)
   useEffect(() => {
     if (!baseId) return;
-    if (urlTableId) return;
+    if (activeTableId) return;
 
     if (tablesQ.status === "success") {
       const first = tablesQ.data?.[0];
       if (first) {
-        router.replace(`/b/${String(baseId)}?t=${first.id}`);
+        (async () => {
+          await prefetchTable(first.id, debouncedSearch);
+          startTransition(() => {
+            setActiveTableId(first.id);
+            router.replace(`/b/${String(baseId)}?t=${first.id}`);
+          });
+        })();
       } else if (!createTable.isPending) {
         createTable.mutate({ baseId: String(baseId), name: "Table 1" });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseId, urlTableId, tablesQ.status, tablesQ.data, createTable.isPending]);
+  }, [baseId, tablesQ.status, tablesQ.data, createTable.isPending]);
 
   /* ---------------- Columns + rows ---------------- */
   const {
@@ -907,10 +955,12 @@ export default function BasePage() {
   }
   if (baseErr) return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
 
-  if (!urlTableId) {
+  // Use UI state, not URL param, to decide readiness
+  if (!tableId) {
     return <div className="p-6 text-sm">Preparing your first table…</div>;
   }
 
+  // Prefetch makes this rare, but keep lightweight placeholders
   if (colsLoading) return <div className="p-6 text-sm" />;
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
   if (!base || !colsFromServer) return <div className="p-6">Not found.</div>;
