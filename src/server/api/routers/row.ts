@@ -5,56 +5,89 @@ import { Prisma } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
 
 export const rowRouter = createTRPCRouter({
-  // --- list (infinite scroll w/ cursor) ---
+  // --- list (infinite scroll w/ cursor + optional search) ---
+  // Uses a stable tuple cursor (createdAt, id) for BOTH search and non-search paths.
   list: protectedProcedure
-  .input(
-    z.object({
-      tableId: z.string(),
-      limit: z.number().min(1).max(500).default(200),
-      cursor: z.object({ id: z.string() }).nullish(),
-    })
-  )
-  .query(async ({ ctx, input }) => {
-    const { tableId, limit, cursor } = input;
+    .input(
+      z.object({
+        tableId: z.string(),
+        limit: z.number().min(1).max(500).default(200),
+        // tuple cursor keeps ordering deterministic across big datasets + search filters
+        cursor: z
+          .object({
+            createdAt: z.string(), // ISO string
+            id: z.string(),
+          })
+          .nullish(),
+        search: z.string().optional().transform((s) => s?.trim() ?? ""),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const { tableId, limit, cursor, search } = input;
+      const limitPlusOne = limit + 1;
 
-    const rows = await ctx.db.row.findMany({
-      where: { tableId },
-      orderBy: { id: "asc" }, // ✅ single stable sort key
-      take: limit + 1,
-      cursor: cursor ? { id: cursor.id } : undefined,
-      skip: cursor ? 1 : 0,
-    });
+      const afterCursorSql = cursor
+        ? Prisma.sql`AND ("createdAt","id") > (${new Date(cursor.createdAt)}, ${cursor.id})`
+        : Prisma.empty;
 
-    let nextCursor: { id: string } | undefined;
-    if (rows.length > limit) {
-      const next = rows.pop()!;
-      nextCursor = { id: next.id };
-    }
+      // One SQL path for both cases; include the FTS predicate only when search is non-empty
+      const rows = await ctx.db.$queryRaw<
+        { id: string; tableId: string; data: any; createdAt: Date }[]
+      >(
+        Prisma.sql`
+          SELECT "id","tableId","data","createdAt"
+          FROM "Row"
+          WHERE "tableId" = ${tableId}
+            ${
+              search
+                ? Prisma.sql`AND "search_vector" @@ plainto_tsquery('simple', ${search})`
+                : Prisma.empty
+            }
+            ${afterCursorSql}
+          ORDER BY "createdAt" ASC, "id" ASC
+          LIMIT ${limitPlusOne}
+        `
+      );
 
-    const total = await ctx.db.row.count({
-      where: { tableId },
-    });
+      const pageRows = rows.slice(0, limit);
 
-    return { rows, nextCursor, total };
-  }),
+      const nextCursor =
+        rows.length > limit
+          ? {
+              createdAt: pageRows[pageRows.length - 1]!.createdAt.toISOString(),
+              id: pageRows[pageRows.length - 1]!.id,
+            }
+          : undefined;
 
+      // total (respecting search if provided)
+      const countRes = await ctx.db.$queryRaw<{ count: bigint }[]>(
+        Prisma.sql`
+          SELECT COUNT(*)::bigint AS count
+          FROM "Row"
+          WHERE "tableId" = ${tableId}
+            ${
+              search
+                ? Prisma.sql`AND "search_vector" @@ plainto_tsquery('simple', ${search})`
+                : Prisma.empty
+            }
+        `
+      );
+      const total = Number(countRes[0]?.count ?? 0n);
+
+      return { rows: pageRows, nextCursor, total };
+    }),
 
   // --- create (single row add) ---
   create: protectedProcedure
     .input(
       z.object({
         tableId: z.string(),
-        data: z.record(
-          z.union([z.string(), z.number(), z.literal("")])
-        ),
+        data: z.record(z.union([z.string(), z.number(), z.literal("")])),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const row = await ctx.db.row.create({
-        data: {
-          tableId: input.tableId,
-          data: input.data as any,
-        },
+        data: { tableId: input.tableId, data: input.data as any },
       });
       return row;
     }),
@@ -70,8 +103,6 @@ export const rowRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // We write directly into Row.data jsonb using jsonb_set.
-      // If NUMBER and value != "" we cast to numeric in SQL so it stays a number in JSON.
       await ctx.db.$executeRawUnsafe(
         `
         UPDATE "Row"
@@ -91,12 +122,11 @@ export const rowRouter = createTRPCRouter({
         input.rowId,
         input.colType
       );
+      // trigger keeps search_vector in sync
       return { ok: true };
     }),
 
-  // --- bulkAddDemo (NEW) ---
-  // This is the 100k rows button.
-  // Call with { tableId, count: 100_000 }.
+  // --- bulkAddDemo (100k rows button) ---
   bulkAddDemo: protectedProcedure
     .input(
       z.object({
@@ -107,7 +137,6 @@ export const rowRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { tableId, count } = input;
 
-      // 1. Fetch all columns for this table so we know what keys to generate.
       const columns = await ctx.db.column.findMany({
         where: { tableId },
         orderBy: { ordinal: "asc" },
@@ -120,11 +149,9 @@ export const rowRouter = createTRPCRouter({
         });
       }
 
-      // 2. Helper to build the Row.data JSON for one row
       const buildRowData = (): Record<string, string | number | ""> => {
         const obj: Record<string, string | number | ""> = {};
         for (const col of columns) {
-          // match your ColumnType enum in Prisma (TEXT | NUMBER)
           if (col.type === "TEXT") {
             obj[col.id] = faker.commerce.productName();
           } else if (col.type === "NUMBER") {
@@ -136,17 +163,13 @@ export const rowRouter = createTRPCRouter({
         return obj;
       };
 
-      // 3. Insert in batches so we don't do 100k single inserts
       const BATCH_SIZE = 1000;
       const totalBatches = Math.ceil(count / BATCH_SIZE);
 
       for (let b = 0; b < totalBatches; b++) {
         const rowsThisBatch =
-          b === totalBatches - 1
-            ? count - b * BATCH_SIZE
-            : BATCH_SIZE;
+          b === totalBatches - 1 ? count - b * BATCH_SIZE : BATCH_SIZE;
 
-        // build a batch of rows
         const batch: Prisma.RowCreateManyInput[] = Array.from(
           { length: rowsThisBatch },
           () => ({
@@ -155,10 +178,7 @@ export const rowRouter = createTRPCRouter({
           })
         );
 
-        // createMany is much faster than .create() in a loop
-        await ctx.db.row.createMany({
-          data: batch,
-        });
+        await ctx.db.row.createMany({ data: batch });
       }
 
       return { ok: true };
