@@ -16,7 +16,7 @@ type DataGridProps<TData> = {
 };
 
 const CELL_W = 180;
-const CELL_H = 32;
+const CELL_H = 36;
 
 const INDEX_W = 84;
 const INDEX_H = 36;
@@ -294,7 +294,7 @@ export default function DataGrid<TData>({
                             {flexRender(c.column.columnDef.cell, c.getContext())}
                           </div>
                         ) : (
-                          <div className="flex items-center" style={{ height: CELL_H }}>
+                          <div className="relative flex items-center" style={{ height: CELL_H }}>
                             {flexRender(c.column.columnDef.cell, c.getContext())}
                           </div>
                         )}

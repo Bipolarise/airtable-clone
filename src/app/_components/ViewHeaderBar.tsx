@@ -1,6 +1,7 @@
 // src/app/_components/ViewHeaderBar.tsx
 "use client";
 
+import { useRef, useState } from "react";
 import { IconEyeSlash } from "~/app/_icons/IconEyeSlash";
 import { IconFunnelSimple } from "~/app/_icons/IconFunnelSimple";
 import { IconGroup } from "~/app/_icons/IconGroup";
@@ -9,13 +10,23 @@ import { IconPaintBucket } from "~/app/_icons/IconPaintBucket";
 import { IconRowHeightSmall } from "~/app/_icons/IconRowHeightSmall";
 import { IconArrowSquareOut } from "~/app/_icons/IconArrowSquareOut";
 import { IconGridFeature } from "~/app/_icons/IconGridFeature";
+import FilterModal from "~/app/_components/FilterModal";
+import AddConditionModal from "~/app/_components/AddConditionModal";
+
+type FieldOptionForModal = {
+  id: string;
+  label: string;
+  type: "TEXT" | "NUMBER";
+};
 
 type ViewHeaderBarProps = {
   onAddDemoRows: () => void;
   isAddingDemoRows: boolean;
-  // we still keep search state in the page (modal will edit it)
   search: string;
   onOpenSearchModal: () => void;
+
+  /** Visible fields for the current table (id, label, and type) */
+  fieldOptions: FieldOptionForModal[];
 };
 
 export default function ViewHeaderBar({
@@ -23,7 +34,29 @@ export default function ViewHeaderBar({
   isAddingDemoRows,
   search,
   onOpenSearchModal,
+  fieldOptions,
 }: ViewHeaderBarProps) {
+  const filterBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // mutually exclusive panels
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [conditionOpen, setConditionOpen] = useState(false);
+
+  const toggleFilter = () => {
+    setConditionOpen(false);
+    setFilterOpen((o) => !o);
+  };
+
+  const replaceWithCondition = () => {
+    setFilterOpen(false);
+    setConditionOpen(true);
+  };
+
+  const closeAll = () => {
+    setFilterOpen(false);
+    setConditionOpen(false);
+  };
+
   return (
     <div className="border-b border-neutral-200 bg-white">
       <div className="flex h-12 items-center justify-between px-4 text-[13px] text-neutral-700">
@@ -32,7 +65,15 @@ export default function ViewHeaderBar({
           <button className="flex items-center gap-2 rounded px-1.5 hover:bg-neutral-100">
             <IconGridFeature className="h-4 w-4 text-[#166ee1]" />
             <span className="font-medium text-neutral-800">Grid view</span>
-            <svg className="text-neutral-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className="text-neutral-500"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
@@ -46,7 +87,17 @@ export default function ViewHeaderBar({
             className="flex items-center gap-1 rounded px-1.5 transition-colors hover:bg-neutral-100 active:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
             title="Insert demo rows"
           >
-            <svg className="text-neutral-600" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              className="text-neutral-600"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <rect x="14" y="2" width="4" height="4" />
               <path d="M4 20 L20 4" />
               <line x1="2" y1="11" x2="6" y2="11" />
@@ -56,25 +107,82 @@ export default function ViewHeaderBar({
               <line x1="9" y1="2" x2="9" y2="6" />
               <line x1="7" y1="4" x2="11" y2="4" />
             </svg>
-            <span className="whitespace-nowrap">{isAddingDemoRows ? "Adding…" : "+100k rows"}</span>
+            <span className="whitespace-nowrap">
+              {isAddingDemoRows ? "Adding…" : "+100k rows"}
+            </span>
           </button>
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconEyeSlash className="h-[14px] w-[14px] text-neutral-600" /><span>Hide fields</span></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconFunnelSimple className="h-[14px] w-[14px] text-neutral-600" /><span>Filter</span></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconGroup className="h-[14px] w-[14px] text-neutral-600" /><span>Group</span></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconArrowsDownUp className="h-[14px] w-[14px] text-neutral-600" /><span>Sort</span></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconPaintBucket className="h-[14px] w-[14px] text-neutral-600" /><span>Color</span></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconRowHeightSmall className="h-[14px] w-[14px] text-neutral-600" /></button>
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"><IconArrowSquareOut className="h-[14px] w-[14px] text-neutral-600" /><span>Share and sync</span></button>
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconEyeSlash className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Hide fields</span>
+          </button>
 
-          {/* Search icon -> opens modal */}
+          {/* FILTER button */}
+          <button
+            ref={filterBtnRef}
+            onClick={toggleFilter}
+            className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"
+          >
+            <IconFunnelSimple className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Filter</span>
+          </button>
+
+          {/* Only one panel at a time */}
+          {filterOpen && (
+            <FilterModal
+              anchorEl={filterBtnRef.current}
+              onClose={closeAll}
+              onRequestAddCondition={replaceWithCondition}
+            />
+          )}
+          {conditionOpen && (
+            <AddConditionModal
+              anchorEl={filterBtnRef.current}
+              onClose={closeAll}
+              fieldOptions={fieldOptions} // <-- includes type
+            />
+          )}
+
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconGroup className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Group</span>
+          </button>
+
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconArrowsDownUp className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Sort</span>
+          </button>
+
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconPaintBucket className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Color</span>
+          </button>
+
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconRowHeightSmall className="h-[14px] w-[14px] text-neutral-600" />
+          </button>
+
+          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+            <IconArrowSquareOut className="h-[14px] w-[14px] text-neutral-600" />
+            <span>Share and sync</span>
+          </button>
+
+          {/* Search icon */}
           <button
             onClick={onOpenSearchModal}
             className="flex items-center rounded px-1.5 hover:bg-neutral-100"
             aria-label="Open search"
             title={search ? `Search: ${search}` : "Search"}
           >
-            <svg className="text-neutral-600" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className="text-neutral-600"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <circle cx="11" cy="11" r="7" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>

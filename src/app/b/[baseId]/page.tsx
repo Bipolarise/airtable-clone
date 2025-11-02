@@ -17,6 +17,8 @@ import BaseHeaderToolbar from "~/app/_components/BaseHeaderToolbar";
 import DataGrid from "~/app/_components/DataGrid";
 import ViewHeaderBar from "~/app/_components/ViewHeaderBar";
 import SearchResultsModal from "~/app/_components/SearchResultsModal";
+import AddConditionModal from "~/app/_components/AddConditionModal";
+import type { Option } from "~/app/_components/FieldSelect";
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -26,7 +28,8 @@ import { api } from "~/trpc/react";
 
 /* ---------------- helpers ---------------- */
 const SIDEBAR_W_CLASS = "pl-14";
-const HILITE = "#FFF6D1"; // highlight color for matched TEXT cells
+const HILITE = "#FFF6D1";          // highlight color for matched TEXT cells
+const ACTIVE_HILITE = "#F7D563";    // active/current hit color
 
 /* ---------------- Data models ---------------- */
 type ColumnMeta = {
@@ -206,6 +209,16 @@ export default function BasePage() {
       .sort((a, b) => a.ordinal - b.ordinal);
   }, [localCols, colsFromServer]);
 
+  type FieldOptionForModal = { id: string; label: string; type: "TEXT" | "NUMBER" };
+
+  const fieldOptionsForModal: FieldOptionForModal[] = useMemo(
+    () =>
+      unifiedCols
+        .filter((c) => !c.hidden)
+        .map((c) => ({ id: c.id, label: c.name, type: c.type } as const)),
+    [unifiedCols]
+  );
+
   // rows (infinite w/ cursor) — includes search param
   const rowsQ = api.row.list.useInfiniteQuery(
     { tableId, limit: 200, search: debouncedSearch },
@@ -250,6 +263,10 @@ export default function BasePage() {
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
 
+  // NEW: one-shot “no select” + “no chrome” flags when jumping to a search hit
+  const [suppressFocusKey, setSuppressFocusKey] = useState<string | null>(null);
+  const suppressSelectNextFocusRef = useRef(false);
+
   /* ---------------- grid helpers ---------------- */
   const editableColIds = useMemo(
     () => unifiedCols.filter((c) => !c.hidden).map((c) => c.id),
@@ -284,21 +301,28 @@ export default function BasePage() {
       const cellKey = `${r.original.id}:${cId}`;
       setFocusedCellKey(cellKey);
 
+      const tryFocus = (el: HTMLInputElement) => {
+        el.focus({ preventScroll: true } as any);
+        if (!suppressSelectNextFocusRef.current) {
+          el.select();
+        }
+        // consume the one-shot flag
+        suppressSelectNextFocusRef.current = false;
+      };
+
       const el = cellRefs.current[cellKey];
 
       if (!el) {
         requestAnimationFrame(() => {
           const el2 = cellRefs.current[cellKey];
           if (el2) {
-            el2.focus({ preventScroll: true } as any);
-            el2.select();
+            tryFocus(el2);
           }
         });
         return;
       }
 
-      el.focus({ preventScroll: true } as any);
-      el.select();
+      tryFocus(el);
 
       [50, 100, 150, 200, 250, 300, 400, 500].forEach((delay) => {
         setTimeout(() => {
@@ -308,7 +332,6 @@ export default function BasePage() {
           if (!isFocused && document.body.contains(freshEl)) {
             try {
               freshEl.focus({ preventScroll: true } as any);
-              freshEl.select();
             } catch {}
           }
         }, delay);
@@ -651,7 +674,7 @@ export default function BasePage() {
                   <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
                     <path
                       fillRule="nonzero"
-                      d="M8 9.49951C5.32109 9.49957 2.84382 10.93 1.50451 13.2501C1.43822 13.365 1.42025 13.5014 1.45457 13.6295C1.48888 13.7576 1.57267 13.8668 1.6875 13.9331C1.80235 13.9994 1.93883 14.0173 2.06691 13.983C2.195 13.9487 2.30419 13.8648 2.37048 13.75C3.53197 11.738 5.67677 10.4996 8 10.4995C10.3232 10.4995 12.4681 11.7379 13.6295 13.75C13.6958 13.8648 13.805 13.9487 13.9331 13.983C14.0612 14.0173 14.1976 13.9994 14.3125 13.9331C14.4273 13.8668 14.5111 13.7576 14.5454 13.6295C14.5797 13.5014 14.5618 13.365 14.4955 13.2501C13.1563 10.9299 10.679 9.49944 8 9.49951Z M8 1.5C5.52065 1.5 3.5 3.52065 3.5 6C3.5 8.47935 5.52065 10.4995 8 10.4995C10.4793 10.4995 12.5 8.47935 12.5 6C12.5 3.52065 10.4793 1.5 8 1.5ZM8 2.5C9.9389 2.5 11.5 4.0611 11.5 6C11.5 7.9389 9.9389 9.49951 8 9.49951C6.0611 9.49951 4.5 7.9389 4.5 6C4.5 4.0611 6.0611 2.5 8 2.5Z"
+                      d="M8 9.49951C5.32109 9.49957 2.84382 10.93 1.50451 13.2501C1.43822 13.365 1.42025 13.5014 1.45457 13.6295C1.48888 13.7576 1.57267 13.8668 1.6875 13.9331C1.80235 13.9994 1.93883 14.0173 2.06691 13.983C2.195 13.9487 2.30419 13.8648 2.37048 13.75C3.53197 11.738 5.67677 10.4996 8 10.4995C10.3232 10.4995 12.4681 11.7379 13.6295 13.75C13.6958 13.8648 13.805 13.9487 13.9331 13.983C14.0612 14.0173 14.1976 13.9994 14.3125 13.9331C14.4273 13.8668 14.5111 13.7576 14.5454 13.6295C14.5797 13.5014 14.5611 13.365 14.4955 13.2501C13.1563 10.9299 10.679 9.49944 8 9.49951Z M8 1.5C5.52065 1.5 3.5 3.52065 3.5 6C3.5 8.47935 5.52065 10.4995 8 10.4995C10.4793 10.4995 12.5 8.47935 12.5 6C12.5 3.52065 10.4793 1.5 8 1.5ZM8 2.5C9.9389 2.5 11.5 4.0611 11.5 6C11.5 7.9389 9.9389 9.49951 8 9.49951C6.0611 9.49951 4.5 7.9389 4.5 6C4.5 4.0611 6.0611 2.5 8 2.5Z"
                     />
                   </svg>
                 );
@@ -764,36 +787,49 @@ export default function BasePage() {
 
           const isAttachmentPlaceholder = c.name === "Attachment...";
 
+          // NEW: compute whether this cell is the active search hit
+          const cellKey = `${row.original.id}:${c.id}`;
+          const isActiveHit = !!normSearch && focusedCellKey === cellKey;
+          const suppressChrome = suppressFocusKey === cellKey;
+
           return (
-            <div
-              className="group relative h-8"
-              style={isMatch ? { backgroundColor: HILITE } : undefined}
-            >
+            // host the background overlay; use ACTIVE_HILITE for the active cell
+            <div className="relative h-9" tabIndex={-1}>
+              {isMatch && (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0"
+                  style={{ backgroundColor: isActiveHit ? ACTIVE_HILITE : HILITE }}
+                />
+              )}
+
               {isAttachmentPlaceholder && v === "" && (
-                <div className="pointer-events-none absolute inset-0 flex items-center px-2 text-[12px] text-neutral-500 group-focus-within:hidden">
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center px-2 text-[12px] text-neutral-500 group-focus-within:hidden">
                   <span className="truncate">Required field(s) are...</span>
                   <span className="ml-auto pl-2 text-[12px] text-neutral-400">ⓘ</span>
                 </div>
               )}
 
-              <CellEditor
-                key={`${row.original.id}:${c.id}`}
-                initial={v}
-                isNumber={c.type === "NUMBER"}
-                onCommit={(finalVal) => {
-                  scheduleCommit(
-                    row.original.id,
-                    c.id,
-                    c.type as "TEXT" | "NUMBER",
-                    finalVal
-                  );
-                }}
-                onMove={move}
-                inputRefCb={setCellRef(row.original.id, c.id)}
-                allowTabOut={atLastCell}
-                allowShiftTabOut={atFirstCell}
-                shouldAutoFocus={focusedCellKey === `${row.original.id}:${c.id}`}
-              />
+              <div className={"relative z-10 " + (suppressChrome ? "no-focus-chrome" : "")}>
+                <CellEditor
+                  key={`${row.original.id}:${c.id}`}
+                  initial={v}
+                  isNumber={c.type === "NUMBER"}
+                  onCommit={(finalVal) => {
+                    scheduleCommit(
+                      row.original.id,
+                      c.id,
+                      c.type as "TEXT" | "NUMBER",
+                      finalVal
+                    );
+                  }}
+                  onMove={move}
+                  inputRefCb={setCellRef(row.original.id, c.id)}
+                  allowTabOut={atLastCell}
+                  allowShiftTabOut={atFirstCell}
+                  shouldAutoFocus={focusedCellKey === `${row.original.id}:${c.id}`}
+                />
+              </div>
             </div>
           );
         },
@@ -813,6 +849,7 @@ export default function BasePage() {
     scheduleCommit,
     focusedCellKey,
     normSearch, // re-evaluate to update highlight
+    suppressFocusKey,
   ]);
 
   /* ---------------- build TanStack table instance ---------------- */
@@ -881,6 +918,9 @@ export default function BasePage() {
       const clamped = ((i % n) + n) % n;
       setHitIndex(clamped);
       const m = matches[clamped]!;
+      // suppress select & blue chrome for this one jump
+      suppressSelectNextFocusRef.current = true;
+      setSuppressFocusKey(`${m.rowId}:${m.colId}`);
       focusCell(m.rowIndex, m.colIndex);
     },
     [matches, focusCell]
@@ -891,6 +931,29 @@ export default function BasePage() {
 
   /* ---------------- infinite scroll trigger ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
+
+  // keep a ref so we can read the OLD search value inside the closer
+  const latestSearchRef = useRef("");
+  useEffect(() => {
+    latestSearchRef.current = debouncedSearch;
+  }, [debouncedSearch]);
+
+  const closeSearchAndReset = useCallback(async () => {
+    // Close modal & clear UI search immediately (no debounce lag)
+    setShowModal(false);
+    setSearchText("");
+    setDebouncedSearch("");
+    latestSearchRef.current = "";
+
+    // Invalidate all row.list queries so the mounted one refetches with search:""
+    await utils.row.list.invalidate();
+
+    // Reset UI affordances
+    gridScrollRef.current?.scrollTo({ top: 0, behavior: "auto" as any });
+    setRowSelection({});
+    setFocusedCellKey(null);
+    setSuppressFocusKey(null); // clear chrome suppression
+  }, [utils.row.list]);
 
   // reset scroll + selection when (debounced) search changes
   useEffect(() => {
@@ -949,6 +1012,19 @@ export default function BasePage() {
     debouncedSearch,
   ]);
 
+  /* ---------------- FILTER UI wiring (AddConditionModal) ---------------- */
+  const [conditionOpen, setConditionOpen] = useState(false);
+  const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
+
+  // Build options for the "Select a field" dropdown from current (non-hidden) columns
+  const fieldOptions: Option[] = useMemo(
+    () =>
+      unifiedCols
+        .filter((c) => !c.hidden)
+        .map((c) => ({ id: c.id, label: c.name })),
+    [unifiedCols]
+  );
+
   /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
     return <div className="p-6 text-sm" />;
@@ -991,7 +1067,20 @@ export default function BasePage() {
           }}
           isAddingDemoRows={bulkAdd.isPending}
           search={searchText}
-          onOpenSearchModal={() => setShowModal((v) => !v)} // toggle via icon
+          onOpenSearchModal={() => {
+            if (showModal) {
+              void closeSearchAndReset();
+            } else {
+              setShowModal(true);
+            }
+          }}
+          fieldOptions={unifiedCols
+            .filter(c => !c.hidden) // keep only visible, or remove this line if you want all
+            .map(c => ({
+              id: c.id,
+              label: c.name,
+              type: c.type as "TEXT" | "NUMBER", // <-- REQUIRED
+            }))}
         />
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1027,10 +1116,35 @@ export default function BasePage() {
           onPrev={onPrev}
           onNext={onNext}
           onGoto={goto}
-          onClose={() => setShowModal(false)}
+          onClose={closeSearchAndReset}
           onTermChange={setSearchText}
         />
       )}
+
+      {/* Filter: Add Condition modal (anchored to Filter button) */}
+      {conditionOpen && (
+        <AddConditionModal
+          anchorEl={filterAnchor}
+          onClose={() => setConditionOpen(false)}
+          fieldOptions={fieldOptionsForModal}   // <-- not the plain Option[]
+        />
+      )}
+
+      {/* one-off CSS to hide blue focus ring + selection when suppressing */}
+      <style jsx global>{`
+        .no-focus-chrome input:focus {
+          outline: none !important;
+          box-shadow: none !important;
+        }
+        .no-focus-chrome input::selection {
+          background: transparent !important;
+          color: inherit !important;
+        }
+        .no-focus-chrome input::-moz-selection {
+          background: transparent !important;
+          color: inherit !important;
+        }
+      `}</style>
     </div>
   );
 }
