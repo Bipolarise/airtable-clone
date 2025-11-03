@@ -17,14 +17,15 @@ import BaseHeaderToolbar from "~/app/_components/BaseHeaderToolbar";
 import DataGrid from "~/app/_components/DataGrid";
 import ViewHeaderBar from "~/app/_components/ViewHeaderBar";
 import SearchResultsModal from "~/app/_components/SearchResultsModal";
-import AddConditionModal from "~/app/_components/AddConditionModal";
-import type { Option } from "~/app/_components/FieldSelect";
 import {
   type ColumnDef,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { api } from "~/trpc/react";
+
+// Pull in the Condition shape that ViewHeaderBar/AddConditionModal use
+import type { Condition } from "~/app/_components/ViewHeaderBar";
 
 /* ---------------- helpers ---------------- */
 const SIDEBAR_W_CLASS = "pl-14";
@@ -76,6 +77,22 @@ export default function BasePage() {
     return () => clearTimeout(id);
   }, [searchText]);
 
+  /* ---------------- PERSISTED FILTER CONDITIONS ---------------- */
+  // Single source of truth for filter conditions; passed to the query.
+  const [filterConditions, setFilterConditions] = useState<Condition[]>([]);
+
+  // Columns that should be tinted because they are used by an active filter
+  const highlightedCols = useMemo(() => {
+    const needsValue = (op: Condition["op"]) => op !== "empty" && op !== "not_empty";
+    const s = new Set<string>();
+    for (const c of filterConditions) {
+      if (!c.fieldId) continue;
+      if (needsValue(c.op) && String(c.value ?? "").trim() === "") continue;
+      s.add(c.fieldId);
+    }
+    return s;
+  }, [filterConditions]);
+
   /* ---------------- bulkAdd 100k rows mutation ---------------- */
   const bulkAdd = api.row.bulkAddDemo.useMutation({
     onSuccess: () => {
@@ -83,6 +100,7 @@ export default function BasePage() {
         tableId,
         limit: 200,
         search: debouncedSearch,
+        conditions: filterConditions,
       });
     },
   });
@@ -99,7 +117,7 @@ export default function BasePage() {
   // prefetch meta + first page of rows to avoid blank states
   const prefetchTable = useCallback(
     async (id: string, search = "") => {
-      const qRows = { tableId: id, limit: 200, search };
+      const qRows = { tableId: id, limit: 200, search, conditions: [] as Condition[] };
       await Promise.all([
         utils.table.meta.prefetch({ tableId: id }),
         utils.row.list.prefetchInfinite(qRows),
@@ -219,9 +237,9 @@ export default function BasePage() {
     [unifiedCols]
   );
 
-  // rows (infinite w/ cursor) — includes search param
+  // rows (infinite w/ cursor) — includes search + conditions
   const rowsQ = api.row.list.useInfiniteQuery(
-    { tableId, limit: 200, search: debouncedSearch },
+    { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions },
     {
       enabled: !!tableId,
       getNextPageParam: (d) => d?.nextCursor ?? undefined,
@@ -263,7 +281,7 @@ export default function BasePage() {
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
 
-  // NEW: one-shot “no select” + “no chrome” flags when jumping to a search hit
+  // one-shot “no select” + “no chrome” flags when jumping to a search hit
   const [suppressFocusKey, setSuppressFocusKey] = useState<string | null>(null);
   const suppressSelectNextFocusRef = useRef(false);
 
@@ -306,7 +324,6 @@ export default function BasePage() {
         if (!suppressSelectNextFocusRef.current) {
           el.select();
         }
-        // consume the one-shot flag
         suppressSelectNextFocusRef.current = false;
       };
 
@@ -353,7 +370,7 @@ export default function BasePage() {
 
   const updateCell = api.row.updateCell.useMutation({
     onMutate: async (vars) => {
-      const q = { tableId, limit: 200, search: debouncedSearch } as const;
+      const q = { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions } as const;
 
       await utils.row.list.cancel(q);
       const prev = utils.row.list.getInfiniteData(q);
@@ -455,7 +472,7 @@ export default function BasePage() {
 
   const addRowMut = api.row.create.useMutation({
     onMutate: async (vars) => {
-      const q = { tableId, limit: 200, search: debouncedSearch } as const;
+      const q = { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions } as const;
 
       await utils.row.list.cancel(q);
       const prev = utils.row.list.getInfiniteData(q);
@@ -645,6 +662,8 @@ export default function BasePage() {
     for (const c of unifiedCols) {
       if (c.hidden) continue;
 
+      const colIsFiltered = highlightedCols.has(c.id);
+
       defs.push({
         id: c.id,
 
@@ -714,12 +733,24 @@ export default function BasePage() {
           const isAttachmentHeader = c.name === "Attachment...";
 
           return (
-            <div className="flex h-8 items-center gap-1.5 pr-2 text-[12px] font-medium text-neutral-700">
-              <span className="shrink-0">{headerIcon}</span>
-              <span className="truncate">{c.name}</span>
-              {isAttachmentHeader && (
-                <span className="ml-1 pl-8 text-[16px] leading-none text-neutral-400">ⓘ</span>
+            <div className="relative w-full h-full">
+              {/* full-cell tint (stretch into the th padding with negative margins) */}
+              {colIsFiltered && (
+                <div
+                  aria-hidden
+                  className="absolute inset-0 -mx-2"   // adjust to match your th padding
+                  style={{ backgroundColor: "#E8F5E4" }}
+                />
               )}
+
+              {/* actual header content above the overlay */}
+              <div className="relative z-10 flex h-8 items-center gap-1.5 pr-2 text-[12px] font-medium text-neutral-700">
+                <span className="shrink-0">{headerIcon}</span>
+                <span className="truncate">{c.name}</span>
+                {isAttachmentHeader && (
+                  <span className="ml-1 pl-8 text-[16px] leading-none text-neutral-400">ⓘ</span>
+                )}
+              </div>
             </div>
           );
         },
@@ -787,14 +818,13 @@ export default function BasePage() {
 
           const isAttachmentPlaceholder = c.name === "Attachment...";
 
-          // NEW: compute whether this cell is the active search hit
+          // compute whether this cell is the active search hit
           const cellKey = `${row.original.id}:${c.id}`;
           const isActiveHit = !!normSearch && focusedCellKey === cellKey;
           const suppressChrome = suppressFocusKey === cellKey;
 
           return (
-            // host the background overlay; use ACTIVE_HILITE for the active cell
-            <div className="relative h-9" tabIndex={-1}>
+            <div className="relative h-9" tabIndex={-1} style={colIsFiltered ? { backgroundColor: "#DEF7D9" } : undefined}>
               {isMatch && (
                 <div
                   aria-hidden
@@ -848,8 +878,9 @@ export default function BasePage() {
     focusCell,
     scheduleCommit,
     focusedCellKey,
-    normSearch, // re-evaluate to update highlight
+    normSearch,
     suppressFocusKey,
+    highlightedCols,
   ]);
 
   /* ---------------- build TanStack table instance ---------------- */
@@ -891,14 +922,12 @@ export default function BasePage() {
     () => (normSearch ? filteredRows.length : 0),
     [filteredRows, normSearch]
   );
-  const fieldCount = 0; // not searching field names (yet)
+  const fieldCount = 0;
   const cellCount = matches.length;
 
-  // ---- Modal visibility is now independent of results ----
   const [showModal, setShowModal] = useState(false);
   const [hitIndex, setHitIndex] = useState(0);
 
-  // If matches change while open, keep the index in range
   useEffect(() => {
     if (!showModal) return;
     if (matches.length === 0) {
@@ -918,7 +947,6 @@ export default function BasePage() {
       const clamped = ((i % n) + n) % n;
       setHitIndex(clamped);
       const m = matches[clamped]!;
-      // suppress select & blue chrome for this one jump
       suppressSelectNextFocusRef.current = true;
       setSuppressFocusKey(`${m.rowId}:${m.colId}`);
       focusCell(m.rowIndex, m.colIndex);
@@ -932,30 +960,23 @@ export default function BasePage() {
   /* ---------------- infinite scroll trigger ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
 
-  // keep a ref so we can read the OLD search value inside the closer
   const latestSearchRef = useRef("");
   useEffect(() => {
     latestSearchRef.current = debouncedSearch;
   }, [debouncedSearch]);
 
   const closeSearchAndReset = useCallback(async () => {
-    // Close modal & clear UI search immediately (no debounce lag)
     setShowModal(false);
     setSearchText("");
     setDebouncedSearch("");
     latestSearchRef.current = "";
-
-    // Invalidate all row.list queries so the mounted one refetches with search:""
     await utils.row.list.invalidate();
-
-    // Reset UI affordances
     gridScrollRef.current?.scrollTo({ top: 0, behavior: "auto" as any });
     setRowSelection({});
     setFocusedCellKey(null);
-    setSuppressFocusKey(null); // clear chrome suppression
+    setSuppressFocusKey(null);
   }, [utils.row.list]);
 
-  // reset scroll + selection when (debounced) search changes
   useEffect(() => {
     gridScrollRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
     setRowSelection({});
@@ -970,14 +991,12 @@ export default function BasePage() {
 
     const canFetch = () => rowsQ.hasNextPage && !rowsQ.isFetchingNextPage;
 
-    // Prefill if content doesn't overflow enough to require scrolling
     const prefillIfShort = () => {
       if (canFetch() && el.scrollHeight - el.clientHeight <= NEAR_PX) {
         void rowsQ.fetchNextPage();
       }
     };
 
-    // run once and whenever size/content changes
     prefillIfShort();
 
     let ticking = false;
@@ -997,7 +1016,6 @@ export default function BasePage() {
 
     el.addEventListener("scroll", onScroll, { passive: true });
 
-    // if rows/layout change, try to prefill again
     const ro = new ResizeObserver(prefillIfShort);
     ro.observe(el);
 
@@ -1012,31 +1030,16 @@ export default function BasePage() {
     debouncedSearch,
   ]);
 
-  /* ---------------- FILTER UI wiring (AddConditionModal) ---------------- */
-  const [conditionOpen, setConditionOpen] = useState(false);
-  const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
-
-  // Build options for the "Select a field" dropdown from current (non-hidden) columns
-  const fieldOptions: Option[] = useMemo(
-    () =>
-      unifiedCols
-        .filter((c) => !c.hidden)
-        .map((c) => ({ id: c.id, label: c.name })),
-    [unifiedCols]
-  );
-
   /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
     return <div className="p-6 text-sm" />;
   }
   if (baseErr) return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
 
-  // Use UI state, not URL param, to decide readiness
   if (!tableId) {
     return <div className="p-6 text-sm">Preparing your first table…</div>;
   }
 
-  // Prefetch makes this rare, but keep lightweight placeholders
   if (colsLoading) return <div className="p-6 text-sm" />;
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
   if (!base || !colsFromServer) return <div className="p-6">Not found.</div>;
@@ -1074,13 +1077,17 @@ export default function BasePage() {
               setShowModal(true);
             }
           }}
+          // Pass the full typed options (with field type)
           fieldOptions={unifiedCols
-            .filter(c => !c.hidden) // keep only visible, or remove this line if you want all
-            .map(c => ({
+            .filter((c) => !c.hidden)
+            .map((c) => ({
               id: c.id,
               label: c.name,
-              type: c.type as "TEXT" | "NUMBER", // <-- REQUIRED
+              type: c.type as "TEXT" | "NUMBER",
             }))}
+          // Persisted filter state (drives which modal opens & keeps values)
+          conditions={filterConditions}
+          onChangeConditions={setFilterConditions}
         />
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1118,15 +1125,6 @@ export default function BasePage() {
           onGoto={goto}
           onClose={closeSearchAndReset}
           onTermChange={setSearchText}
-        />
-      )}
-
-      {/* Filter: Add Condition modal (anchored to Filter button) */}
-      {conditionOpen && (
-        <AddConditionModal
-          anchorEl={filterAnchor}
-          onClose={() => setConditionOpen(false)}
-          fieldOptions={fieldOptionsForModal}   // <-- not the plain Option[]
         />
       )}
 
