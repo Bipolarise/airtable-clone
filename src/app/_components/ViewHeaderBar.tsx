@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useRef, useState, useEffect, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { IconEyeSlash } from "~/app/_icons/IconEyeSlash";
 import { IconFunnelSimple } from "~/app/_icons/IconFunnelSimple";
 import { IconGroup } from "~/app/_icons/IconGroup";
@@ -53,13 +52,25 @@ type ViewHeaderBarProps = {
 
   /** Optional: lift column visibility to parent */
   onChangeHiddenMap?: (hiddenById: Record<string, boolean>) => void;
+  seedHiddenMap?: Record<string, boolean>;
+
+  /** NEW: hook up to the external left-side ViewsPanel */
+  onToggleViews?: () => void;
+  onViewsHoverStart?: () => void;
+  onViewsHoverEnd?: () => void;
+  /** NEW: label for the current view (e.g., "Grid view 2") */
+  activeViewName?: string;
 };
 
 /* ---- constants ---- */
-const HEADER_H = 48; // h-12
 const FILTER_ACTIVE_BG = "#DEF7D9";
 const FILTER_ACTIVE_RING_BASE = "#DEF7D9";
 const FILTER_ACTIVE_RING_HOVER = "#6B9E6F";
+
+/* ---- Exclusions: labels that can NEVER be hidden or shown in the modal ---- */
+const EXCLUDED_LABELS = new Set(["name"]);
+const isExcluded = (f: FieldOptionForModal) =>
+  EXCLUDED_LABELS.has(f.label.toLowerCase());
 
 /* -------------------------------- Component -------------------------------- */
 export default function ViewHeaderBar(props: ViewHeaderBarProps) {
@@ -72,51 +83,12 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     conditions,
     onChangeConditions,
     onChangeHiddenMap,
+    onToggleViews,
+    onViewsHoverStart,
+    onViewsHoverEnd,
+    activeViewName,
+    seedHiddenMap,
   } = props;
-
-  /* ---------------- Views state ---------------- */
-  type ViewItem = { id: string; name: string; type: "grid" };
-  const [views, setViews] = useState<ViewItem[]>([
-    { id: "grid-1", name: "Grid view", type: "grid" },
-    { id: "grid-2", name: "Grid view 2", type: "grid" },
-    { id: "grid-3", name: "Grid view 3", type: "grid" },
-  ]);
-  const [activeViewId, setActiveViewId] = useState("grid-1");
-
-  const [viewsOpen, setViewsOpen] = useState(false);
-  const [viewQuery, setViewQuery] = useState("");
-  const viewsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const sideRef = useRef<HTMLDivElement | null>(null);
-
-  const filteredViews = useMemo(() => {
-    const q = viewQuery.trim().toLowerCase();
-    if (!q) return views;
-    return views.filter((v) => v.name.toLowerCase().includes(q));
-  }, [views, viewQuery]);
-
-  const addNewView = () => {
-    const n = views.filter((v) => v.type === "grid").length + 1;
-    const v: ViewItem = { id: `grid-${Date.now()}`, name: `Grid view ${n}`, type: "grid" };
-    setViews((prev) => [...prev, v]);
-    setActiveViewId(v.id);
-  };
-
-  useEffect(() => {
-    if (!viewsOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (sideRef.current?.contains(t)) return;
-      if (viewsBtnRef.current?.contains(t)) return;
-      setViewsOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setViewsOpen(false);
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [viewsOpen]);
 
   /* ---------------- Filters summary ---------------- */
   const activeConds = useMemo(() => {
@@ -174,6 +146,15 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
 
   /* ---------------- Hide / Show fields ---------------- */
   const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
+
+  // If a seed is provided, force excluded fields (e.g., Name) to be visible.
+  useEffect(() => {
+    if (!seedHiddenMap) return;
+    const corrected: Record<string, boolean> = { ...seedHiddenMap };
+    for (const f of fieldOptions) if (isExcluded(f)) corrected[f.id] = false;
+    setHiddenById(corrected);
+  }, [seedHiddenMap, fieldOptions]);
+
   useEffect(() => {
     onChangeHiddenMap?.(hiddenById);
   }, [hiddenById, onChangeHiddenMap]);
@@ -181,10 +162,23 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   const toggleHidden = (id: string) =>
     setHiddenById((m) => ({ ...m, [id]: !m[id] }));
 
+  // Hide all fields that are *in the modal* (exclude Name)
   const hideAll = () =>
-    setHiddenById(Object.fromEntries(fieldOptions.map((f) => [f.id, true])));
+    setHiddenById((m) => {
+      const next = { ...m };
+      for (const f of fieldOptions) {
+        next[f.id] = isExcluded(f) ? false : true;
+      }
+      return next;
+    });
+
+  // Show all fields
   const showAll = () =>
-    setHiddenById(Object.fromEntries(fieldOptions.map((f) => [f.id, false])));
+    setHiddenById((m) => {
+      const next = { ...m };
+      for (const f of fieldOptions) next[f.id] = false;
+      return next;
+    });
 
   const iconForLabel = (label: string, type: "TEXT" | "NUMBER"): ReactNode => {
     const cls = "h-4 w-4 text-neutral-700";
@@ -256,15 +250,18 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     }
   };
 
+  /* Build the list for the modal: exclude Name entirely */
   const hideFields: HideFieldsModalField[] = useMemo(
     () =>
-      fieldOptions.map((f) => ({
-        id: f.id,
-        label: f.label,
-        hidden: !!hiddenById[f.id],
-        type: f.type === "NUMBER" ? "NUMBER" : "TEXT",
-        icon: iconForLabel(f.label, f.type),
-      })),
+      fieldOptions
+        .filter((f) => !isExcluded(f))
+        .map((f) => ({
+          id: f.id,
+          label: f.label,
+          hidden: !!hiddenById[f.id],
+          type: f.type === "NUMBER" ? "NUMBER" : "TEXT",
+          icon: iconForLabel(f.label, f.type),
+        })),
     [fieldOptions, hiddenById]
   );
 
@@ -285,9 +282,10 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
         {/* LEFT: Views icon + current view */}
         <div className="flex items-center gap-2">
           <button
-            ref={viewsBtnRef}
             className="flex items-center rounded px-1.5 py-1 hover:bg-neutral-100"
-            onClick={() => setViewsOpen((o) => !o)}
+            onClick={onToggleViews}
+            onMouseEnter={onViewsHoverStart}
+            onMouseLeave={onViewsHoverEnd}
             aria-label="Views"
             title="Views"
           >
@@ -297,7 +295,7 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
           <button className="flex items-center gap-2 rounded px-1.5 hover:bg-neutral-100">
             <IconGridFeature className="h-4 w-4 text-[#166ee1]" />
             <span className="font-medium text-neutral-800">
-              {views.find((v) => v.id === activeViewId)?.name ?? "Grid view"}
+              {activeViewName ?? "Grid view"}
             </span>
             <svg
               className="text-neutral-500"
@@ -425,98 +423,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
           </button>
         </div>
       </div>
-
-      {/* Views side panel */}
-      {viewsOpen &&
-        createPortal(
-          <>
-            {/* dim overlay on small screens */}
-            <div className="fixed inset-0 z-40 bg-black/0 md:hidden" />
-
-            <div
-              ref={sideRef}
-              className="fixed left-0 z-50 h-[calc(100vh-var(--h))] w-[260px] translate-x-0 border-r border-neutral-200 bg-white shadow-lg transition-transform duration-150 ease-out"
-              style={{ top: HEADER_H, ["--h" as any]: `${HEADER_H}px` }}
-              role="dialog"
-              aria-label="Views"
-            >
-              <div className="flex h-full flex-col">
-                <div className="px-3 py-2 text-[13px] font-medium text-neutral-700">
-                  Views
-                </div>
-
-                {/* Create & Search */}
-                <div className="px-2">
-                  <button
-                    type="button"
-                    onClick={addNewView}
-                    className="mb-2 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-neutral-700 hover:bg-neutral-50"
-                  >
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300">
-                      +
-                    </span>
-                    <span>Create new…</span>
-                  </button>
-
-                  <div className="mb-2 flex items-center rounded-md border border-neutral-300 px-2 py-1.5">
-                    <svg width="16" height="16" viewBox="0 0 24 24" className="text-neutral-500">
-                      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
-                      <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" strokeWidth="2" />
-                    </svg>
-                    <input
-                      value={viewQuery}
-                      onChange={(e) => setViewQuery(e.target.value)}
-                      placeholder="Find a view"
-                      className="ml-2 w-full text-[13px] outline-none placeholder:text-neutral-400"
-                    />
-                  </div>
-                </div>
-
-                {/* Views list */}
-                <div className="min-h-0 flex-1 overflow-auto px-1">
-                  {filteredViews.map((v) => {
-                    const active = v.id === activeViewId;
-                    return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => {
-                          setActiveViewId(v.id);
-                          setViewsOpen(false);
-                        }}
-                        className={
-                          "flex w-full items-center gap-2 rounded px-3 py-2 text-left text-[13px] " +
-                          (active ? "bg-neutral-100" : "hover:bg-neutral-50")
-                        }
-                      >
-                        <IconGridFeature className="h-4 w-4 text-[#166ee1]" />
-                        <span className="truncate">{v.name}</span>
-                        {active && (
-                          <svg width="16" height="16" viewBox="0 0 24 24" className="ml-auto text-blue-600">
-                            <polyline points="4 12 9 17 20 6" fill="none" stroke="currentColor" strokeWidth="2" />
-                          </svg>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Floating add button bottom-left */}
-                <div className="pointer-events-none relative">
-                  <button
-                    type="button"
-                    onClick={addNewView}
-                    className="pointer-events-auto absolute bottom-4 left-4 inline-flex h-9 w-9 items-center justify-center rounded-full bg-neutral-100 text-neutral-700 ring-1 ring-neutral-300 hover:bg-neutral-200"
-                    title="New view"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>,
-          document.body
-        )}
     </div>
   );
 }

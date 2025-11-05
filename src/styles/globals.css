@@ -4,3 +4,28 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+/* === Grid scrollbar tweaks (single class, no left gutter) === */
+.grid-scroll {
+  scrollbar-gutter: stable;                     /* <- was 'stable both-edges' */
+  scrollbar-width: auto;                        /* Firefox */
+  scrollbar-color: rgba(0,0,0,.35) transparent; /* Firefox thumb/track */
+}
+
+/* WebKit (Chrome/Safari/Edge) */
+.grid-scroll::-webkit-scrollbar {
+  width: 11px;   /* vertical thickness (slightly thinner) */
+  height: 11px;  /* horizontal thickness (slightly thinner) */
+}
+.grid-scroll::-webkit-scrollbar-track {
+  background: transparent;                      /* no white box */
+}
+.grid-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(0,0,0,.35);
+  border-radius: 10px;
+  background-clip: padding-box;
+  border: 3px solid transparent;                /* keeps a gap without bulk */
+}
+.grid-scroll::-webkit-scrollbar-corner {
+  background: transparent;                      /* no corner square */
+}

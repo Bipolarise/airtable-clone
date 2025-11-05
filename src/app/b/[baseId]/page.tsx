@@ -17,20 +17,25 @@ import BaseHeaderToolbar from "~/app/_components/BaseHeaderToolbar";
 import DataGrid from "~/app/_components/DataGrid";
 import ViewHeaderBar from "~/app/_components/ViewHeaderBar";
 import SearchResultsModal from "~/app/_components/SearchResultsModal";
+import ViewsPanel, { type ViewItem } from "~/app/_components/ViewsPanel";
+import "~/styles/globals.css";
 import {
   type ColumnDef,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { api } from "~/trpc/react";
+import { useViewHiddenFields } from "~/app/_logic/useViewHiddenFields";
 
-// Pull in the Condition shape that ViewHeaderBar/AddConditionModal use
 import type { Condition } from "~/app/_components/ViewHeaderBar";
+import HideFieldsModal from "~/app/_components/HideFieldsModal";
 
-/* ---------------- helpers ---------------- */
-const SIDEBAR_W_CLASS = "pl-14";
-const HILITE = "#FFF6D1";          // highlight color for matched TEXT cells
-const ACTIVE_HILITE = "#F7D563";    // active/current hit color
+/* ---------------- layout constants ---------------- */
+const BASE_RAIL_W = 56;
+const VIEWS_PANEL_W = 260;
+
+const HILITE = "#FFF6D1";
+const ACTIVE_HILITE = "#F7D563";
 
 /* ---------------- Data models ---------------- */
 type ColumnMeta = {
@@ -54,34 +59,94 @@ export default function BasePage() {
   const { baseId } = useParams<{ baseId: string }>();
   const searchParams = useSearchParams();
   const urlTableId = searchParams.get("t") ?? "";
-
   const utils = api.useUtils();
 
-  // UI-controlled active table for smooth switches (decoupled from URL)
-  const [activeTableId, setActiveTableId] = useState<string>(urlTableId);
+  // -------- Views (left side panel) --------
+  const [viewsOpen, setViewsOpen] = useState(false);
 
-  // adopt URL on first mount (don’t override if we already have UI state)
+  // ---- Views (per-table saved views) ----
+  const urlViewId = searchParams.get("v") || null;
+  const [activeViewId, setActiveViewId] = useState<string | null>(urlViewId);
+
+  // -------- tables / base --------
+  const [activeTableId, setActiveTableId] = useState<string>(urlTableId);
   useEffect(() => {
     setActiveTableId((prev) => (prev ? prev : urlTableId));
   }, [urlTableId]);
-
   const tableId = activeTableId;
+
+  // SERVER VIEWS
+  const viewsQ = api.view.listByTable.useQuery(
+    { tableId: String(tableId || "") },
+    { enabled: !!tableId }
+  );
+
+  // Always put "Grid view" first if it exists
+  const views: ViewItem[] = useMemo(() => {
+    const vs = (viewsQ.data ?? []).map((v) => ({
+      id: v.id,
+      name: v.name,
+      type: "grid" as const,
+    }));
+    vs.sort((a, b) => {
+      const aIsDefault = a.name === "Grid view" ? 1 : 0;
+      const bIsDefault = b.name === "Grid view" ? 1 : 0;
+      return bIsDefault - aIsDefault; // default first
+    });
+    return vs;
+  }, [viewsQ.data]);
+
+  const activeViewName = useMemo(
+    () => views.find((v) => v.id === activeViewId)?.name ?? "Grid view",
+    [views, activeViewId]
+  );
+
+  // create view on the server
+  const createView = api.view.save.useMutation({
+    onSuccess: async (created) => {
+      await utils.view.listByTable.invalidate({ tableId: String(tableId || "") });
+      setActiveViewId(created.id);
+
+      if (baseId && tableId) {
+        const params = new URLSearchParams(Array.from(searchParams.entries()));
+        params.set("t", tableId);
+        params.set("v", created.id);
+        router.replace(`/b/${String(baseId)}?${params.toString()}`);
+      }
+    },
+  });
+
+  // If the table has no views yet, create the default "Grid view"
+  useEffect(() => {
+    if (!tableId) return;
+    if (viewsQ.isLoading || createView.isPending) return;
+    if ((viewsQ.data?.length ?? 0) === 0) {
+      createView.mutate({ tableId: String(tableId), name: "Grid view" });
+    }
+  }, [tableId, viewsQ.isLoading, viewsQ.data, createView]);
+
+  // hook to add a new view
+  const addView = useCallback(() => {
+    if (!tableId || createView.isPending) return;
+    const n = (views.filter((v) => v.type === "grid").length || 0) + 1;
+    createView.mutate({
+      tableId: String(tableId),
+      name: `Grid view ${n}`,
+      // no `type` field here because the save input doesn't include it.
+      // if your DB has a `type` column with default 'grid', you're set.
+    });
+  }, [tableId, createView.isPending, createView, views]);
 
   /* ---------------- search state ---------------- */
   const [searchText, setSearchText] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  // debounce searchText -> debouncedSearch
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(searchText), 300);
     return () => clearTimeout(id);
   }, [searchText]);
 
-  /* ---------------- PERSISTED FILTER CONDITIONS ---------------- */
-  // Single source of truth for filter conditions; passed to the query.
+  /* ---------------- filters ---------------- */
   const [filterConditions, setFilterConditions] = useState<Condition[]>([]);
-
-  // Columns that should be tinted because they are used by an active filter
   const highlightedCols = useMemo(() => {
     const needsValue = (op: Condition["op"]) => op !== "empty" && op !== "not_empty";
     const s = new Set<string>();
@@ -114,7 +179,6 @@ export default function BasePage() {
     { enabled: !!baseId }
   );
 
-  // prefetch meta + first page of rows to avoid blank states
   const prefetchTable = useCallback(
     async (id: string, search = "") => {
       const qRows = { tableId: id, limit: 200, search, conditions: [] as Condition[] };
@@ -153,8 +217,6 @@ export default function BasePage() {
           (old ?? []).map((t) => (t.id === ctx.tempId ? real : t))
         );
       }
-
-      // Warm the cache, then swap UI, then sync URL
       await prefetchTable(real.id, debouncedSearch);
       startTransition(() => {
         setActiveTableId(real.id);
@@ -173,7 +235,6 @@ export default function BasePage() {
     return `Table ${n}`;
   };
 
-  // Soft switch (no flicker): prefetch -> setActive -> update URL
   const switchToTable = useCallback(
     async (id: string) => {
       if (!baseId || id === activeTableId) return;
@@ -186,7 +247,6 @@ export default function BasePage() {
     [baseId, activeTableId, prefetchTable, debouncedSearch, router]
   );
 
-  // bootstrap first table (prefetch -> setActive -> URL)
   useEffect(() => {
     if (!baseId) return;
     if (activeTableId) return;
@@ -208,6 +268,31 @@ export default function BasePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseId, tablesQ.status, tablesQ.data, createTable.isPending]);
 
+  // Reset active view when table changes
+  useEffect(() => {
+    setActiveViewId(null);
+  }, [tableId]);
+
+  // Pick a default active view once views load (prefer "Grid view")
+  useEffect(() => {
+    if (activeViewId) return;
+    const first =
+      views.find((v) => v.name === "Grid view") ?? // prefer the default
+      views[0];
+
+    if (!first) return;
+
+    setActiveViewId(first.id);
+
+    if (baseId && tableId) {
+      const params = new URLSearchParams(Array.from(searchParams.entries()));
+      params.set("t", tableId);
+      params.set("v", first.id);
+      router.replace(`/b/${String(baseId)}?${params.toString()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [views, activeViewId, baseId, tableId]);
+
   /* ---------------- Columns + rows ---------------- */
   const {
     data: colsFromServer,
@@ -227,17 +312,51 @@ export default function BasePage() {
       .sort((a, b) => a.ordinal - b.ordinal);
   }, [localCols, colsFromServer]);
 
+  // Per-view hidden overlay
+  const {
+    effectiveCols: viewCols,
+    setHidden,
+    hideAll,
+    showAll,
+    hiddenSet,
+  } = useViewHiddenFields(unifiedCols, tableId, activeViewId);
+
+  // For the standalone HideFieldsModal (outside the header)
+  const toggleHidden = useCallback(
+    (id: string) => {
+      const curHidden = !!viewCols.find((c) => c.id === id)?.hidden;
+      setHidden(id, !curHidden);
+    },
+    [setHidden, viewCols]
+  );
+
+  // ------- IMPORTANT: memoized handler to avoid infinite update loops -------
+  const onHeaderHiddenChange = useCallback(
+    (m: Record<string, boolean>) => {
+      // Only call setHidden for diffs
+      for (const c of unifiedCols) {
+        const nextHidden = !!m[c.id];
+        const curHidden = hiddenSet.has(c.id);
+        if (nextHidden !== curHidden) {
+          setHidden(c.id, nextHidden);
+        }
+      }
+    },
+    [unifiedCols, hiddenSet, setHidden]
+  );
+  // -------------------------------------------------------------------------
+
   type FieldOptionForModal = { id: string; label: string; type: "TEXT" | "NUMBER" };
 
   const fieldOptionsForModal: FieldOptionForModal[] = useMemo(
     () =>
-      unifiedCols
+      viewCols
         .filter((c) => !c.hidden)
         .map((c) => ({ id: c.id, label: c.name, type: c.type } as const)),
-    [unifiedCols]
+    [viewCols]
   );
 
-  // rows (infinite w/ cursor) — includes search + conditions
+  // rows (infinite w/ cursor)
   const rowsQ = api.row.list.useInfiniteQuery(
     { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions },
     {
@@ -251,16 +370,13 @@ export default function BasePage() {
     [rowsQ.data]
   );
 
-  // Which columns are TEXT (and visible)
   const textColIds = useMemo(
-    () => unifiedCols.filter((c) => c.type === "TEXT" && !c.hidden).map((c) => c.id),
-    [unifiedCols]
+    () => viewCols.filter((c) => c.type === "TEXT" && !c.hidden).map((c) => c.id),
+    [viewCols]
   );
 
-  // Normalize search
   const normSearch = debouncedSearch.trim().toLowerCase();
 
-  // Filter rows by TEXT cells that contain the term (substring match)
   const filteredRows: RowRecord[] = useMemo(() => {
     if (!normSearch) return allRows;
     return allRows.filter((r) =>
@@ -280,15 +396,13 @@ export default function BasePage() {
   /* ---------------- selection + focus ---------------- */
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const [focusedCellKey, setFocusedCellKey] = useState<string | null>(null);
-
-  // one-shot “no select” + “no chrome” flags when jumping to a search hit
   const [suppressFocusKey, setSuppressFocusKey] = useState<string | null>(null);
   const suppressSelectNextFocusRef = useRef(false);
 
   /* ---------------- grid helpers ---------------- */
   const editableColIds = useMemo(
-    () => unifiedCols.filter((c) => !c.hidden).map((c) => c.id),
-    [unifiedCols]
+    () => viewCols.filter((c) => !c.hidden).map((c) => c.id),
+    [viewCols]
   );
 
   const colIndexMap = useMemo(() => {
@@ -305,9 +419,7 @@ export default function BasePage() {
     []
   );
 
-  const tableRef = useRef<ReturnType<typeof useReactTable<RowRecord>> | null>(
-    null
-  );
+  const tableRef = useRef<ReturnType<typeof useReactTable<RowRecord>> | null>(null);
 
   const focusCell = useCallback(
     (rowIndex: number, colIndex: number) => {
@@ -321,20 +433,15 @@ export default function BasePage() {
 
       const tryFocus = (el: HTMLInputElement) => {
         el.focus({ preventScroll: true } as any);
-        if (!suppressSelectNextFocusRef.current) {
-          el.select();
-        }
+        if (!suppressSelectNextFocusRef.current) el.select();
         suppressSelectNextFocusRef.current = false;
       };
 
       const el = cellRefs.current[cellKey];
-
       if (!el) {
         requestAnimationFrame(() => {
           const el2 = cellRefs.current[cellKey];
-          if (el2) {
-            tryFocus(el2);
-          }
+          if (el2) tryFocus(el2);
         });
         return;
       }
@@ -384,7 +491,6 @@ export default function BasePage() {
 
             const oldVal = r.data?.[vars.columnId];
             const newVal = String(vars.value);
-
             if (String(oldVal ?? "") === newVal) return r;
 
             return { ...r, data: { ...r.data, [vars.columnId]: newVal } };
@@ -405,17 +511,9 @@ export default function BasePage() {
   });
 
   const scheduleCommit = useCallback(
-    (
-      rowId: string,
-      columnId: string,
-      colType: "TEXT" | "NUMBER",
-      value: string | number | ""
-    ) => {
+    (rowId: string, columnId: string, colType: "TEXT" | "NUMBER", value: string | number | "") => {
       const cellKey = rowId + ":" + columnId;
-
-      if (String(lastCommittedRef.current[cellKey] ?? "") === String(value ?? "")) {
-        return;
-      }
+      if (String(lastCommittedRef.current[cellKey] ?? "") === String(value ?? "")) return;
 
       const alreadyQueued = pendingQueueRef.current.some(
         (c) =>
@@ -436,25 +534,19 @@ export default function BasePage() {
 
     const flushAll = () => {
       if (pendingQueueRef.current.length === 0) return;
-
       const commitsToSend = pendingQueueRef.current;
       pendingQueueRef.current = [];
 
       for (const commit of commitsToSend) {
         const { rowId, columnId, colType, value } = commit;
         const cellKey = rowId + ":" + columnId;
-
         lastCommittedRef.current[cellKey] = value;
-
         updateCell.mutate({ rowId, columnId, value, colType });
       }
     };
 
     const active = document.activeElement;
-    const isCellInput =
-      active &&
-      active.tagName === "INPUT" &&
-      (active as HTMLInputElement).type !== "checkbox";
+    const isCellInput = active && active.tagName === "INPUT" && (active as HTMLInputElement).type !== "checkbox";
 
     if (isCellInput) {
       flushAll();
@@ -465,10 +557,7 @@ export default function BasePage() {
 
   /* ---------------- row.create mutation ---------------- */
   const makeEmptyRow = () =>
-    Object.fromEntries(unifiedCols.map((c) => [c.id, ""])) as Record<
-      string,
-      string | number | ""
-    >;
+    Object.fromEntries(unifiedCols.map((c) => [c.id, ""])) as Record<string, string | number | "">;
 
   const addRowMut = api.row.create.useMutation({
     onMutate: async (vars) => {
@@ -503,13 +592,11 @@ export default function BasePage() {
 
       return { prev, q, tempId };
     },
-
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev && ctx.q) {
         utils.row.list.setInfiniteData(ctx.q, ctx.prev);
       }
     },
-
     onSuccess: (realRow, _vars, ctx) => {
       if (!ctx) return;
 
@@ -540,17 +627,13 @@ export default function BasePage() {
 
   const createColumn = api.column.create.useMutation({
     onMutate: async (vars) => {
-      const maxOrdinal = unifiedCols.reduce(
-        (acc, c) => (c.ordinal > acc ? c.ordinal : acc),
-        -1
-      );
+      const maxOrdinal = unifiedCols.reduce((acc, c) => (c.ordinal > acc ? c.ordinal : acc), -1);
       const nextOrdinal = maxOrdinal + 1;
 
       const tempId = `temp-col-${Date.now()}`;
 
       setLocalCols((prev) => {
-        const baseCols =
-          prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
+        const baseCols = prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
         const optimisticCol: ColumnMeta = {
           id: tempId,
           name: vars.name,
@@ -568,8 +651,7 @@ export default function BasePage() {
     },
     onSuccess: (real, _vars, ctx) => {
       setLocalCols((prev) => {
-        const baseCols =
-          prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
+        const baseCols = prev ?? (colsFromServer as ColumnMeta[] | undefined) ?? [];
         return baseCols.map((c) =>
           c.id === ctx?.tempId
             ? {
@@ -592,13 +674,12 @@ export default function BasePage() {
     if (!tableId || createColumn.isPending) return;
     createColumn.mutate({ tableId, name: makeNextTextFieldName(), type: "TEXT" });
   };
-
   const handleAddNumberColumn = () => {
     if (!tableId || createColumn.isPending) return;
     createColumn.mutate({ tableId, name: "Number", type: "NUMBER" });
   };
 
-  /* ---------------- ColumnDefs for TanStack Table ---------------- */
+  /* ---------------- ColumnDefs ---------------- */
   const columnDefs: ColumnDef<RowRecord, any>[] = useMemo(() => {
     const defs: ColumnDef<RowRecord, any>[] = [];
 
@@ -659,14 +740,13 @@ export default function BasePage() {
       },
     });
 
-    for (const c of unifiedCols) {
+    for (const c of viewCols) {
       if (c.hidden) continue;
 
       const colIsFiltered = highlightedCols.has(c.id);
 
       defs.push({
         id: c.id,
-
         header: () => {
           const headerIcon = (() => {
             switch (c.name) {
@@ -721,7 +801,7 @@ export default function BasePage() {
                   <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
                     <path
                       fillRule="nonzero"
-                      d="M6 2C5.86739 2 5.74021 2.05268 5.64645 2.14645C5.55268 2.24021 5.5 2.36739 5.5 2.5V5.5H2.5C2.36739 5.5 2.24021 5.55268 2.14645 5.64645C2.05268 5.74021 2 5.86739 2 6C2 6.13261 2.05268 6.25979 2.14645 6.35355C2.24021 6.44732 2.36739 6.5 2.5 6.5H5.5V9.5H2.5C2.36739 9.5 2.24021 9.55268 2.14645 9.64645C2.05268 9.74021 2 9.86739 2 10C2 10.1326 2.05268 10.2598 2.14645 10.3536C2.24021 10.4473 2.36739 10.5 2.5 10.5H5.5V13.5C5.5 13.6326 5.55268 13.7598 5.64645 13.8536C5.74021 13.9473 5.86739 14 6 14C6.13261 14 6.25979 13.9473 6.35355 13.8536C6.44732 13.7598 6.5 13.6326 6.5 13.5V10.5H9.5V13.5C9.5 13.6326 9.55268 13.7598 9.64645 13.8536C9.74021 13.9473 9.86739 14 10 14C10.1326 14 10.25979 13.9473 10.3536 13.8536C10.4473 13.7598 10.5 13.6326 10.5 13.5V10.5H13.5C13.6326 10.5 13.7598 10.4473 13.8536 10.3536C13.9473 10.2598 14 10.1326 14 10C14 9.86739 13.9473 9.74021 13.8536 9.64645C13.7598 9.55268 13.6326 9.5 13.5 9.5H10.5V6.5H13.5C13.6326 6.5 13.7598 6.44732 13.8536 6.35355C13.9473 6.25979 14 6.1326 14 6C14 5.86739 13.9473 5.74021 13.8536 5.64645C13.7598 5.55268 13.6326 5.5 13.5 5.5H10.5V2.5C10.5 2.36739 10.4473 2.24021 10.3536 2.14645C10.2598 2.05268 10.1326 2 10 2ZM6.5 6.5H9.5V9.5H6.5V6.5Z"
+                      d="M6 2C5.86739 2 5.74021 2.05268 5.64645 2.14645C5.55268 2.24021 5.5 2.36739 5.5 2.5V5.5H2.5C2.36739 5.5 2.24021 5.55268 2.14645 5.64645C2.05268 5.74021 2 5.86739 2 6C2 6.13261 2.05268 6.25979 2.14645 6.3536C2.24021 6.4473 2.36739 6.5 2.5 6.5H5.5V9.5H2.5C2.36739 9.5 2.24021 9.55268 2.14645 9.64645C2.05268 9.74021 2 9.86739 2 10C2 10.1326 2.05268 10.2598 2.14645 10.3536C2.24021 10.4473 2.36739 10.5 2.5 10.5H5.5V13.5C5.5 13.6326 5.55268 13.7598 5.64645 13.8536C5.74021 13.9473 5.86739 14 6 14C6.13261 14 6.25979 13.9473 6.35355 13.8536C6.44732 13.7598 6.5 13.6326 6.5 13.5V10.5H9.5V13.5C9.5 13.6326 9.55268 13.7598 9.64645 13.8536C9.74021 13.9473 9.86739 14 10 14C10.1326 14 10.25979 13.9473 10.3536 13.8536C10.4473 13.7598 10.5 13.6326 10.5 13.5V10.5H13.5C13.6326 10.5 13.7598 10.4473 13.8536 10.3536C13.9473 10.2598 14 10.1326 14 10C14 9.86739 13.9473 9.74021 13.8536 9.64645C13.7598 9.55268 13.6326 9.5 13.5 9.5H10.5V6.5H13.5C13.6326 6.5 13.7598 6.44732 13.8536 6.35355C13.9473 6.25979 14 6.1326 14 6C14 5.86739 13.9473 5.74021 13.8536 5.64645C13.7598 5.55268 13.6326 5.5 13.5 5.5H10.5V2.5C10.5 2.36739 10.4473 2.24021 10.3536 2.14645C10.2598 2.05268 10.1326 2 10 2ZM6.5 6.5H9.5V9.5H6.5V6.5Z"
                     />
                   </svg>
                 );
@@ -734,16 +814,9 @@ export default function BasePage() {
 
           return (
             <div className="relative w-full h-full">
-              {/* full-cell tint (stretch into the th padding with negative margins) */}
               {colIsFiltered && (
-                <div
-                  aria-hidden
-                  className="absolute inset-0 -mx-2"   // adjust to match your th padding
-                  style={{ backgroundColor: "#E8F5E4" }}
-                />
+                <div aria-hidden className="absolute inset-0 -mx-2" style={{ backgroundColor: "#E8F5E4" }} />
               )}
-
-              {/* actual header content above the overlay */}
               <div className="relative z-10 flex h-8 items-center gap-1.5 pr-2 text-[12px] font-medium text-neutral-700">
                 <span className="shrink-0">{headerIcon}</span>
                 <span className="truncate">{c.name}</span>
@@ -760,7 +833,6 @@ export default function BasePage() {
         cell: ({ row, getValue, column, table }) => {
           const v = getValue() as string | number | "";
 
-          // highlight if this is a TEXT column and value contains the search term
           const isMatch =
             c.type === "TEXT" &&
             typeof v === "string" &&
@@ -776,9 +848,7 @@ export default function BasePage() {
           const atLastCell =
             row.index === lastRow && (colIndexMap.get(column.id) ?? 0) === lastCol;
 
-          const move = (
-            dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab"
-          ) => {
+          const move = (dir: "left" | "right" | "up" | "down" | "tab" | "shiftTab") => {
             let r = curRowIndex;
             let col = curColIndex;
 
@@ -796,17 +866,15 @@ export default function BasePage() {
                 r = Math.min(table.getRowModel().rows.length - 1, r + 1);
                 break;
               case "tab":
-                if (col < lastCol) {
-                  col++;
-                } else {
+                if (col < lastCol) col++;
+                else {
                   col = 0;
                   r = Math.min(table.getRowModel().rows.length - 1, r + 1);
                 }
                 break;
               case "shiftTab":
-                if (col > 0) {
-                  col--;
-                } else {
+                if (col > 0) col--;
+                else {
                   col = lastCol;
                   r = Math.max(0, r - 1);
                 }
@@ -817,14 +885,16 @@ export default function BasePage() {
           };
 
           const isAttachmentPlaceholder = c.name === "Attachment...";
-
-          // compute whether this cell is the active search hit
           const cellKey = `${row.original.id}:${c.id}`;
           const isActiveHit = !!normSearch && focusedCellKey === cellKey;
           const suppressChrome = suppressFocusKey === cellKey;
 
           return (
-            <div className="relative h-9" tabIndex={-1} style={colIsFiltered ? { backgroundColor: "#DEF7D9" } : undefined}>
+            <div
+              className="relative h-9"
+              tabIndex={-1}
+              style={colIsFiltered ? { backgroundColor: "#DEF7D9" } : undefined}
+            >
               {isMatch && (
                 <div
                   aria-hidden
@@ -846,12 +916,7 @@ export default function BasePage() {
                   initial={v}
                   isNumber={c.type === "NUMBER"}
                   onCommit={(finalVal) => {
-                    scheduleCommit(
-                      row.original.id,
-                      c.id,
-                      c.type as "TEXT" | "NUMBER",
-                      finalVal
-                    );
+                    scheduleCommit(row.original.id, c.id, c.type as "TEXT" | "NUMBER", finalVal);
                   }}
                   onMove={move}
                   inputRefCb={setCellRef(row.original.id, c.id)}
@@ -871,7 +936,7 @@ export default function BasePage() {
 
     return defs;
   }, [
-    unifiedCols,
+    viewCols,
     colIndexMap,
     editableColIds,
     setCellRef,
@@ -893,9 +958,7 @@ export default function BasePage() {
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: "onChange",
   });
-
   tableRef.current = table;
-
   const allSelected = table.getIsAllRowsSelected();
 
   /* ---------------- find modal: matches + navigation ---------------- */
@@ -918,10 +981,7 @@ export default function BasePage() {
     return out;
   }, [filteredRows, textColIds, normSearch, colIndexMap]);
 
-  const recordCount = useMemo(
-    () => (normSearch ? filteredRows.length : 0),
-    [filteredRows, normSearch]
-  );
+  const recordCount = useMemo(() => (normSearch ? filteredRows.length : 0), [filteredRows, normSearch]);
   const fieldCount = 0;
   const cellCount = matches.length;
 
@@ -988,7 +1048,6 @@ export default function BasePage() {
     if (!el) return;
 
     const NEAR_PX = 420;
-
     const canFetch = () => rowsQ.hasNextPage && !rowsQ.isFetchingNextPage;
 
     const prefillIfShort = () => {
@@ -1002,8 +1061,7 @@ export default function BasePage() {
     let ticking = false;
     const onScroll = () => {
       if (!canFetch()) return;
-      const nearBottom =
-        el.scrollTop + el.clientHeight >= el.scrollHeight - NEAR_PX;
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - NEAR_PX;
       if (!nearBottom) return;
 
       if (ticking) return;
@@ -1023,12 +1081,73 @@ export default function BasePage() {
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, [
-    rowsQ.hasNextPage,
-    rowsQ.isFetchingNextPage,
-    rowsQ.fetchNextPage,
-    debouncedSearch,
-  ]);
+  }, [rowsQ.hasNextPage, rowsQ.isFetchingNextPage, rowsQ.fetchNextPage, debouncedSearch]);
+
+  /* ---------------- measure header height for the ViewsPanel offset ---------------- */
+  const toolbarWrapRef = useRef<HTMLDivElement>(null);
+  const viewbarWrapRef = useRef<HTMLDivElement>(null);
+  const [hideOpen, setHideOpen] = useState(false);
+  const hideBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const hideModalFields = useMemo(
+    () =>
+      viewCols.map((c) => ({
+        id: c.id,
+        label: c.name,
+        type: c.type,
+        hidden: !!c.hidden,
+      })),
+    [viewCols]
+  );
+
+  const [panelHeaderH, setPanelHeaderH] = useState<number>(96);
+
+  const hover = useRef({ trigger: false, panel: false });
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+
+  const handleTriggerEnter = () => {
+    hover.current.trigger = true;
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+    if (!viewsOpen) {
+      openTimer.current = window.setTimeout(() => setViewsOpen(true), 120);
+    }
+  };
+
+  const handleTriggerLeave = () => {
+    hover.current.trigger = false;
+    if (openTimer.current) { window.clearTimeout(openTimer.current); openTimer.current = null; }
+    closeTimer.current = window.setTimeout(() => {
+      if (!hover.current.panel) setViewsOpen(false);
+    }, 220);
+  };
+
+  const handlePanelEnter = () => {
+    hover.current.panel = true;
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+  };
+
+  const handlePanelLeave = () => {
+    hover.current.panel = false;
+    closeTimer.current = window.setTimeout(() => {
+      if (!hover.current.trigger) setViewsOpen(false);
+    }, 220);
+  };
+
+  useEffect(() => {
+    const calc = () => {
+      const h2 = viewbarWrapRef.current?.getBoundingClientRect().height ?? 0;
+      setPanelHeaderH(h2);
+    };
+
+    const ro = new ResizeObserver(calc);
+    if (toolbarWrapRef.current) ro.observe(toolbarWrapRef.current);
+    if (viewbarWrapRef.current) ro.observe(viewbarWrapRef.current);
+
+    calc();
+
+    return () => ro.disconnect();
+  }, []);
 
   /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
@@ -1049,50 +1168,68 @@ export default function BasePage() {
     <div className="relative flex h-screen flex-row overflow-hidden bg-white text-[13px] text-neutral-700">
       <LeftRail baseName={base?.name} />
 
-      <div className={SIDEBAR_W_CLASS + " flex h-full min-w-0 flex-1 flex-col overflow-hidden"}>
-        <BaseHeaderToolbar
-          baseName={base?.name}
-          baseColor={base?.color ?? "#d4a257"}
-          tables={(tablesQ.data ?? []).map((t) => ({ id: t.id, name: t.name }))}
-          activeTableId={tableId}
-          onSwitchTable={switchToTable}
-          onAddTable={() => {
-            if (!baseId || createTable.isPending) return;
-            createTable.mutate({ baseId: String(baseId), name: makeNextTableName() });
-          }}
-          isCreatingTable={createTable.isPending}
-        />
+      {/* Right side */}
+      <div
+        className="flex h-full min-w-0 flex-1 flex-col overflow-hidden"
+        style={{ paddingLeft: BASE_RAIL_W }}
+      >
+        <div ref={toolbarWrapRef}>
+          <BaseHeaderToolbar
+            baseName={base?.name}
+            baseColor={base?.color ?? "#d4a257"}
+            tables={(tablesQ.data ?? []).map((t) => ({ id: t.id, name: t.name }))}
+            activeTableId={tableId}
+            onSwitchTable={switchToTable}
+            onAddTable={() => {
+              if (!baseId || createTable.isPending) return;
+              createTable.mutate({ baseId: String(baseId), name: makeNextTableName() });
+            }}
+            isCreatingTable={createTable.isPending}
+          />
+        </div>
 
-        <ViewHeaderBar
-          onAddDemoRows={() => {
-            if (!tableId || bulkAdd.isPending) return;
-            bulkAdd.mutate({ tableId, count: 100000 });
-          }}
-          isAddingDemoRows={bulkAdd.isPending}
-          search={searchText}
-          onOpenSearchModal={() => {
-            if (showModal) {
-              void closeSearchAndReset();
-            } else {
-              setShowModal(true);
-            }
-          }}
-          // Pass the full typed options (with field type)
-          fieldOptions={unifiedCols
-            .filter((c) => !c.hidden)
-            .map((c) => ({
+        <div ref={viewbarWrapRef}>
+          <ViewHeaderBar
+            onAddDemoRows={() => {
+              if (!tableId || bulkAdd.isPending) return;
+              bulkAdd.mutate({ tableId, count: 100000 });
+            }}
+            isAddingDemoRows={bulkAdd.isPending}
+            search={searchText}
+            onOpenSearchModal={() => {
+              if (showModal) {
+                void closeSearchAndReset();
+              } else {
+                setShowModal(true);
+              }
+            }}
+            fieldOptions={unifiedCols.map((c) => ({
               id: c.id,
               label: c.name,
               type: c.type as "TEXT" | "NUMBER",
             }))}
-          // Persisted filter state (drives which modal opens & keeps values)
-          conditions={filterConditions}
-          onChangeConditions={setFilterConditions}
-        />
+            seedHiddenMap={Object.fromEntries(
+              unifiedCols.map((c) => [c.id, hiddenSet.has(c.id)])
+            )}
+            onChangeHiddenMap={onHeaderHiddenChange}
+            conditions={filterConditions}
+            onChangeConditions={setFilterConditions}
+            onToggleViews={() => setViewsOpen((o) => !o)}
+            onViewsHoverStart={handleTriggerEnter}
+            onViewsHoverEnd={handleTriggerLeave}
+            activeViewName={activeViewName}
+          />
+        </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {/* Only this container scrolls vertically */}
-          <div ref={gridScrollRef} className="min-h-0 flex-1 overflow-auto">
+        {/* Grid + footer */}
+        <div
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          style={{
+            marginLeft: viewsOpen ? VIEWS_PANEL_W : 0,
+            transition: "margin-left 150ms ease",
+          }}
+        >
+          <div ref={gridScrollRef} className="min-h-0 flex-1 overflow-auto grid-scroll">
             <DataGrid<RowRecord>
               table={table}
               allSelected={allSelected}
@@ -1106,12 +1243,42 @@ export default function BasePage() {
 
           <div className="flex items-center gap-2 border-t border-neutral-200 px-4 py-2 text-[12px] text-neutral-500">
             <span>{totalRecords} records</span>
-            {rowsQ.isFetchingNextPage && (
-              <span className="text-neutral-400">Loading more…</span>
-            )}
+            {rowsQ.isFetchingNextPage && <span className="text-neutral-400">Loading more…</span>}
           </div>
         </div>
       </div>
+
+      {/* LEFT Views side panel */}
+      <ViewsPanel
+        open={viewsOpen}
+        headerHeight={panelHeaderH}
+        width={VIEWS_PANEL_W}
+        views={views}
+        activeViewId={activeViewId}
+        onSelect={(id) => {
+          setActiveViewId(id);
+          setViewsOpen(false);
+          if (baseId && tableId) {
+            const params = new URLSearchParams(Array.from(searchParams.entries()));
+            params.set("t", tableId);
+            params.set("v", id);
+            router.replace(`/b/${String(baseId)}?${params.toString()}`);
+          }
+        }}
+        onCreate={addView}
+        onClose={() => setViewsOpen(false)}
+        leftOffset={BASE_RAIL_W}
+        onHoverIn={() => {
+          hover.current.panel = true;
+          if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+        }}
+        onHoverOut={() => {
+          hover.current.panel = false;
+          closeTimer.current = window.setTimeout(() => {
+            if (!hover.current.trigger) setViewsOpen(false);
+          }, 220);
+        }}
+      />
 
       {/* Search results modal */}
       {showModal && (
@@ -1125,6 +1292,18 @@ export default function BasePage() {
           onGoto={goto}
           onClose={closeSearchAndReset}
           onTermChange={setSearchText}
+        />
+      )}
+
+      {/* Standalone Hide Fields modal (if you still use it elsewhere) */}
+      {hideOpen && (
+        <HideFieldsModal
+          anchorEl={hideBtnRef.current}
+          onClose={() => setHideOpen(false)}
+          fields={hideModalFields}
+          onToggle={toggleHidden}
+          onHideAll={hideAll}
+          onShowAll={showAll}
         />
       )}
 

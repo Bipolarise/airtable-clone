@@ -362,7 +362,7 @@ export default function DataGrid<TData>({
           ref={bottomScrollRef}
           onScroll={onBarScroll}
           onWheel={onBarWheel}
-          className="fixed bottom-0 z-30 h-5 overflow-x-scroll overflow-y-hidden border-t border-neutral-200 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60"
+          className="fixed bottom-0 z-30 h-4 overflow-x-scroll overflow-y-hidden bg-transparent border-0 grid-scroll"
           style={{ left: barLeft, width: barWidth }}
         >
           <div style={{ width: scrollContentW, height: 1 }} />
