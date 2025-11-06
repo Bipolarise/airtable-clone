@@ -132,8 +132,6 @@ export default function BasePage() {
     createView.mutate({
       tableId: String(tableId),
       name: `Grid view ${n}`,
-      // no `type` field here because the save input doesn't include it.
-      // if your DB has a `type` column with default 'grid', you're set.
     });
   }, [tableId, createView.isPending, createView, views]);
 
@@ -235,16 +233,22 @@ export default function BasePage() {
     return `Table ${n}`;
   };
 
+  // <<<<<< INSTANT SWITCH + EMPTY LOADING STATE >>>>>>
   const switchToTable = useCallback(
-    async (id: string) => {
+    (id: string) => {
       if (!baseId || id === activeTableId) return;
-      await prefetchTable(id, debouncedSearch);
+
+      // 1) Switch UI + URL immediately
       startTransition(() => {
         setActiveTableId(id);
+        setActiveViewId(null); // avoid stale per-table view state
         router.replace(`/b/${String(baseId)}?t=${id}`);
       });
+
+      // 2) Warm the data without blocking the UI
+      void prefetchTable(id, debouncedSearch);
     },
-    [baseId, activeTableId, prefetchTable, debouncedSearch, router]
+    [baseId, activeTableId, router, prefetchTable, debouncedSearch]
   );
 
   useEffect(() => {
@@ -330,21 +334,33 @@ export default function BasePage() {
     [setHidden, viewCols]
   );
 
-  // ------- IMPORTANT: memoized handler to avoid infinite update loops -------
+  // Only set diffs coming from child -> parent (prevents loops)
   const onHeaderHiddenChange = useCallback(
     (m: Record<string, boolean>) => {
-      // Only call setHidden for diffs
+      let changed = false;
       for (const c of unifiedCols) {
         const nextHidden = !!m[c.id];
         const curHidden = hiddenSet.has(c.id);
         if (nextHidden !== curHidden) {
           setHidden(c.id, nextHidden);
+          changed = true;
         }
       }
+      if (!changed) return;
     },
     [unifiedCols, hiddenSet, setHidden]
   );
-  // -------------------------------------------------------------------------
+
+  // --- Stable "seed" for ViewHeaderBar: updates only when actual hidden values change
+  const hiddenSignature = useMemo(() => {
+    const ids = unifiedCols.map((c) => c.id);
+    return ids.map((id) => (hiddenSet.has(id) ? "1" : "0") + ":" + id).join("|");
+  }, [unifiedCols, hiddenSet]);
+
+  const seedHiddenMap = useMemo(
+    () => Object.fromEntries(unifiedCols.map((c) => [c.id, hiddenSet.has(c.id)])),
+    [hiddenSignature]
+  );
 
   type FieldOptionForModal = { id: string; label: string; type: "TEXT" | "NUMBER" };
 
@@ -362,6 +378,11 @@ export default function BasePage() {
     {
       enabled: !!tableId,
       getNextPageParam: (d) => d?.nextCursor ?? undefined,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchInterval: false,
+      staleTime: 5 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
     }
   );
 
@@ -370,22 +391,36 @@ export default function BasePage() {
     [rowsQ.data]
   );
 
-  const textColIds = useMemo(
-    () => viewCols.filter((c) => c.type === "TEXT" && !c.hidden).map((c) => c.id),
-    [viewCols]
-  );
+  // No extra client filtering during scroll; use server result
+  const filteredRows: RowRecord[] = allRows;
 
-  const normSearch = debouncedSearch.trim().toLowerCase();
+  // Only compute highlighting when Find modal is open
+  const [showModal, setShowModal] = useState(false);
+  const textColIds = useMemo(() => {
+    if (!showModal) return [];
+    return viewCols.filter((c) => c.type === "TEXT" && !c.hidden).map((c) => c.id);
+  }, [viewCols, showModal]);
+  const normSearch = showModal ? debouncedSearch.trim().toLowerCase() : "";
 
-  const filteredRows: RowRecord[] = useMemo(() => {
-    if (!normSearch) return allRows;
-    return allRows.filter((r) =>
-      textColIds.some((cid) => {
+  const matches = useMemo(() => {
+    if (!showModal) return [];
+    const out: { rowId: string; colId: string; rowIndex: number; colIndex: number }[] = [];
+    if (!normSearch) return out;
+    filteredRows.forEach((r, rIdx) => {
+      textColIds.forEach((cid) => {
         const v = r.data[cid];
-        return typeof v === "string" && v.toLowerCase().includes(normSearch);
-      })
-    );
-  }, [allRows, textColIds, normSearch]);
+        if (typeof v === "string" && v.toLowerCase().includes(normSearch)) {
+          out.push({
+            rowId: r.id,
+            colId: cid,
+            rowIndex: rIdx,
+            colIndex: 0,
+          });
+        }
+      });
+    });
+    return out;
+  }, [filteredRows, textColIds, normSearch, showModal]);
 
   const totalRecords = useMemo(() => {
     const firstPage = rowsQ.data?.pages?.[0];
@@ -546,7 +581,8 @@ export default function BasePage() {
     };
 
     const active = document.activeElement;
-    const isCellInput = active && active.tagName === "INPUT" && (active as HTMLInputElement).type !== "checkbox";
+    const isCellInput =
+      active && active.tagName === "INPUT" && (active as HTMLInputElement).type !== "checkbox";
 
     if (isCellInput) {
       flushAll();
@@ -834,6 +870,7 @@ export default function BasePage() {
           const v = getValue() as string | number | "";
 
           const isMatch =
+            showModal &&
             c.type === "TEXT" &&
             typeof v === "string" &&
             normSearch.length > 0 &&
@@ -946,6 +983,7 @@ export default function BasePage() {
     normSearch,
     suppressFocusKey,
     highlightedCols,
+    showModal,
   ]);
 
   /* ---------------- build TanStack table instance ---------------- */
@@ -962,30 +1000,13 @@ export default function BasePage() {
   const allSelected = table.getIsAllRowsSelected();
 
   /* ---------------- find modal: matches + navigation ---------------- */
-  const matches = useMemo(() => {
-    if (!normSearch) return [];
-    const out: { rowId: string; colId: string; rowIndex: number; colIndex: number }[] = [];
-    filteredRows.forEach((r, rIdx) => {
-      textColIds.forEach((cid) => {
-        const v = r.data[cid];
-        if (typeof v === "string" && v.toLowerCase().includes(normSearch)) {
-          out.push({
-            rowId: r.id,
-            colId: cid,
-            rowIndex: rIdx,
-            colIndex: colIndexMap.get(cid) ?? 0,
-          });
-        }
-      });
-    });
-    return out;
-  }, [filteredRows, textColIds, normSearch, colIndexMap]);
-
-  const recordCount = useMemo(() => (normSearch ? filteredRows.length : 0), [filteredRows, normSearch]);
+  const recordCount = useMemo(
+    () => (normSearch && showModal ? filteredRows.length : 0),
+    [filteredRows, normSearch, showModal]
+  );
   const fieldCount = 0;
   const cellCount = matches.length;
 
-  const [showModal, setShowModal] = useState(false);
   const [hitIndex, setHitIndex] = useState(0);
 
   useEffect(() => {
@@ -1007,81 +1028,125 @@ export default function BasePage() {
       const clamped = ((i % n) + n) % n;
       setHitIndex(clamped);
       const m = matches[clamped]!;
+      const colIdx = colIndexMap.get(m.colId) ?? 0;
       suppressSelectNextFocusRef.current = true;
       setSuppressFocusKey(`${m.rowId}:${m.colId}`);
-      focusCell(m.rowIndex, m.colIndex);
+      focusCell(m.rowIndex, colIdx);
     },
-    [matches, focusCell]
+    [matches, focusCell, colIndexMap]
   );
 
   const onPrev = useCallback(() => goto(hitIndex - 1), [goto, hitIndex]);
   const onNext = useCallback(() => goto(hitIndex + 1), [goto, hitIndex]);
 
-  /* ---------------- infinite scroll trigger ---------------- */
+  /* ---------------- row-aware prefetch before the end of 200 ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
 
-  const latestSearchRef = useRef("");
-  useEffect(() => {
-    latestSearchRef.current = debouncedSearch;
-  }, [debouncedSearch]);
-
-  const closeSearchAndReset = useCallback(async () => {
-    setShowModal(false);
-    setSearchText("");
-    setDebouncedSearch("");
-    latestSearchRef.current = "";
-    await utils.row.list.invalidate();
-    gridScrollRef.current?.scrollTo({ top: 0, behavior: "auto" as any });
-    setRowSelection({});
-    setFocusedCellKey(null);
-    setSuppressFocusKey(null);
-  }, [utils.row.list]);
-
-  useEffect(() => {
-    gridScrollRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
-    setRowSelection({});
-    setFocusedCellKey(null);
-  }, [debouncedSearch]);
+  // tune these to taste
+  const ROW_H = 36; // ~h-9 cell height
+  const ROW_PREFETCH_THRESHOLD_ROWS = 100; // start the next fetch when <120 rows remain below viewport
+  const MIN_PAGE_BUFFER = 3; // try to keep at least 3 pages (3*200 rows) ahead
+  const MAX_PREFETCH_PAGES_PER_PARAM = 16; // safety cap per search/filter combo
+  const SPECULATIVE_BURST_PAGES = 2; // when very close or just loaded, fetch up to 2 pages quickly
 
   useEffect(() => {
     const el = gridScrollRef.current;
     if (!el) return;
 
-    const NEAR_PX = 420;
-    const canFetch = () => rowsQ.hasNextPage && !rowsQ.isFetchingNextPage;
+    let filling = false;
+    let fetchedForThisParam = 0;
 
-    const prefillIfShort = () => {
-      if (canFetch() && el.scrollHeight - el.clientHeight <= NEAR_PX) {
-        void rowsQ.fetchNextPage();
+    const rowsLoaded = () => filteredRows.length;
+    const rowsVisible = () => Math.ceil(el.clientHeight / ROW_H);
+    const topIndex = () => Math.floor(el.scrollTop / ROW_H);
+    const remainingBelow = () => rowsLoaded() - (topIndex() + rowsVisible());
+
+    const canFetch = () =>
+      rowsQ.hasNextPage &&
+      !rowsQ.isFetchingNextPage &&
+      fetchedForThisParam < MAX_PREFETCH_PAGES_PER_PARAM;
+
+    const doFetch = async () => {
+      if (!canFetch()) return false;
+      await rowsQ.fetchNextPage();
+      fetchedForThisParam++;
+      // let layout settle so scrollHeight updates before we decide to fetch again
+      await new Promise(requestAnimationFrame);
+      return true;
+    };
+
+    const burstFetch = async (pages: number) => {
+      for (let i = 0; i < pages; i++) {
+        const ok = await doFetch();
+        if (!ok) break;
       }
     };
 
-    prefillIfShort();
+    const fillAhead = async (isAggressive = false) => {
+      if (filling) return;
+      filling = true;
+      try {
+        // 1) if we're within row threshold, keep fetching until we have a cushion
+        while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
+          const ok = await doFetch();
+          if (!ok) break;
+        }
 
+        // 2) keep a minimum page buffer ahead of the viewport
+        const pagesLoaded = rowsQ.data?.pages?.length ?? 0;
+        while (canFetch() && pagesLoaded + 0 < MIN_PAGE_BUFFER + 1) {
+          const ok = await doFetch();
+          if (!ok) break;
+        }
+
+        // 3) aggressive burst when user is very close or we just mounted/changed params
+        if (isAggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
+          await burstFetch(SPECULATIVE_BURST_PAGES);
+        }
+      } finally {
+        filling = false;
+      }
+    };
+
+    // fire on scroll & wheel for slightly faster reaction on rapid flicks
     let ticking = false;
-    const onScroll = () => {
+    const onScrollish = () => {
       if (!canFetch()) return;
-      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - NEAR_PX;
-      if (!nearBottom) return;
-
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
-        void rowsQ.fetchNextPage();
         ticking = false;
+        if (remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
+          void fillAhead(false);
+        }
       });
     };
 
-    el.addEventListener("scroll", onScroll, { passive: true });
+    // reset burst limiter for this param combo
+    fetchedForThisParam = 0;
 
-    const ro = new ResizeObserver(prefillIfShort);
+    // initial/param-change fill — aggressive to hide first boundary quickly
+    void fillAhead(true);
+
+    el.addEventListener("scroll", onScrollish, { passive: true });
+    el.addEventListener("wheel", onScrollish, { passive: true });
+    const ro = new ResizeObserver(() => void fillAhead(false));
     ro.observe(el);
 
     return () => {
-      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("scroll", onScrollish);
+      el.removeEventListener("wheel", onScrollish);
       ro.disconnect();
     };
-  }, [rowsQ.hasNextPage, rowsQ.isFetchingNextPage, rowsQ.fetchNextPage, debouncedSearch]);
+  // re-run when pages/filters/search change
+  }, [
+    rowsQ.hasNextPage,
+    rowsQ.isFetchingNextPage,
+    rowsQ.data?.pages?.length,
+    filteredRows.length,
+    debouncedSearch,
+    filterConditions,
+  ]);
 
   /* ---------------- measure header height for the ViewsPanel offset ---------------- */
   const toolbarWrapRef = useRef<HTMLDivElement>(null);
@@ -1102,38 +1167,6 @@ export default function BasePage() {
 
   const [panelHeaderH, setPanelHeaderH] = useState<number>(96);
 
-  const hover = useRef({ trigger: false, panel: false });
-  const openTimer = useRef<number | null>(null);
-  const closeTimer = useRef<number | null>(null);
-
-  const handleTriggerEnter = () => {
-    hover.current.trigger = true;
-    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
-    if (!viewsOpen) {
-      openTimer.current = window.setTimeout(() => setViewsOpen(true), 120);
-    }
-  };
-
-  const handleTriggerLeave = () => {
-    hover.current.trigger = false;
-    if (openTimer.current) { window.clearTimeout(openTimer.current); openTimer.current = null; }
-    closeTimer.current = window.setTimeout(() => {
-      if (!hover.current.panel) setViewsOpen(false);
-    }, 220);
-  };
-
-  const handlePanelEnter = () => {
-    hover.current.panel = true;
-    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
-  };
-
-  const handlePanelLeave = () => {
-    hover.current.panel = false;
-    closeTimer.current = window.setTimeout(() => {
-      if (!hover.current.trigger) setViewsOpen(false);
-    }, 220);
-  };
-
   useEffect(() => {
     const calc = () => {
       const h2 = viewbarWrapRef.current?.getBoundingClientRect().height ?? 0;
@@ -1149,9 +1182,15 @@ export default function BasePage() {
     return () => ro.disconnect();
   }, []);
 
+  // --- Grid remount key: re-create DataGrid when visible/hidden set for current view changes
+  const gridKey = useMemo(
+    () => viewCols.map((c) => `${c.id}:${c.hidden ? 1 : 0}`).join("|"),
+    [viewCols]
+  );
+
   /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
-    return <div className="p-6 text-sm" />;
+    return <div className="p-6 text-sm" />; // top-level base/tables loading
   }
   if (baseErr) return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
 
@@ -1159,9 +1198,11 @@ export default function BasePage() {
     return <div className="p-6 text-sm">Preparing your first table…</div>;
   }
 
-  if (colsLoading) return <div className="p-6 text-sm" />;
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
-  if (!base || !colsFromServer) return <div className="p-6">Not found.</div>;
+  if (!base) return <div className="p-6">Not found.</div>;
+
+  // GRID readiness: empty while loading (no skeleton, just hidden grid until data is ready)
+  const gridLoading = colsLoading || rowsQ.isLoading || !colsFromServer || !rowsQ.data;
 
   /* ---------------- UI ---------------- */
   return (
@@ -1190,33 +1231,24 @@ export default function BasePage() {
 
         <div ref={viewbarWrapRef}>
           <ViewHeaderBar
+            key={activeViewId ?? "no-view"} // remount per view to avoid stale local state
             onAddDemoRows={() => {
               if (!tableId || bulkAdd.isPending) return;
               bulkAdd.mutate({ tableId, count: 100000 });
             }}
             isAddingDemoRows={bulkAdd.isPending}
             search={searchText}
-            onOpenSearchModal={() => {
-              if (showModal) {
-                void closeSearchAndReset();
-              } else {
-                setShowModal(true);
-              }
-            }}
+            onOpenSearchModal={() => setShowModal((o) => !o)}
             fieldOptions={unifiedCols.map((c) => ({
               id: c.id,
               label: c.name,
               type: c.type as "TEXT" | "NUMBER",
             }))}
-            seedHiddenMap={Object.fromEntries(
-              unifiedCols.map((c) => [c.id, hiddenSet.has(c.id)])
-            )}
+            seedHiddenMap={seedHiddenMap}
             onChangeHiddenMap={onHeaderHiddenChange}
             conditions={filterConditions}
             onChangeConditions={setFilterConditions}
             onToggleViews={() => setViewsOpen((o) => !o)}
-            onViewsHoverStart={handleTriggerEnter}
-            onViewsHoverEnd={handleTriggerLeave}
             activeViewName={activeViewName}
           />
         </div>
@@ -1230,20 +1262,23 @@ export default function BasePage() {
           }}
         >
           <div ref={gridScrollRef} className="min-h-0 flex-1 overflow-auto grid-scroll">
-            <DataGrid<RowRecord>
-              table={table}
-              allSelected={allSelected}
-              containerRef={gridScrollRef}
-              onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
-              onAddTextColumn={handleAddTextColumn}
-              onAddNumberColumn={handleAddNumberColumn}
-              showLoadingMore={rowsQ.isFetchingNextPage}
-            />
+            {!gridLoading && (
+              <DataGrid<RowRecord>
+                key={gridKey}
+                table={table}
+                allSelected={allSelected}
+                containerRef={gridScrollRef}
+                onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
+                onAddTextColumn={handleAddTextColumn}
+                onAddNumberColumn={handleAddNumberColumn}
+                showLoadingMore={false}
+              />
+            )}
+            {/* when gridLoading === true, this area stays intentionally empty */}
           </div>
 
           <div className="flex items-center gap-2 border-t border-neutral-200 px-4 py-2 text-[12px] text-neutral-500">
-            <span>{totalRecords} records</span>
-            {rowsQ.isFetchingNextPage && <span className="text-neutral-400">Loading more…</span>}
+            <span>{!gridLoading ? totalRecords : 0} records</span>
           </div>
         </div>
       </div>
@@ -1257,7 +1292,6 @@ export default function BasePage() {
         activeViewId={activeViewId}
         onSelect={(id) => {
           setActiveViewId(id);
-          setViewsOpen(false);
           if (baseId && tableId) {
             const params = new URLSearchParams(Array.from(searchParams.entries()));
             params.set("t", tableId);
@@ -1268,16 +1302,6 @@ export default function BasePage() {
         onCreate={addView}
         onClose={() => setViewsOpen(false)}
         leftOffset={BASE_RAIL_W}
-        onHoverIn={() => {
-          hover.current.panel = true;
-          if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
-        }}
-        onHoverOut={() => {
-          hover.current.panel = false;
-          closeTimer.current = window.setTimeout(() => {
-            if (!hover.current.trigger) setViewsOpen(false);
-          }, 220);
-        }}
       />
 
       {/* Search results modal */}
@@ -1290,24 +1314,31 @@ export default function BasePage() {
           onPrev={onPrev}
           onNext={onNext}
           onGoto={goto}
-          onClose={closeSearchAndReset}
+          onClose={() => setShowModal(false)}
           onTermChange={setSearchText}
         />
       )}
 
-      {/* Standalone Hide Fields modal (if you still use it elsewhere) */}
+      {/* Standalone Hide Fields modal */}
       {hideOpen && (
         <HideFieldsModal
           anchorEl={hideBtnRef.current}
           onClose={() => setHideOpen(false)}
-          fields={hideModalFields}
-          onToggle={toggleHidden}
+          fields={viewCols.map((c) => ({
+            id: c.id,
+            label: c.name,
+            type: c.type,
+            hidden: !!c.hidden,
+          }))}
+          onToggle={(id) => {
+            const curHidden = !!viewCols.find((c) => c.id === id)?.hidden;
+            setHidden(id, !curHidden);
+          }}
           onHideAll={hideAll}
           onShowAll={showAll}
         />
       )}
 
-      {/* one-off CSS to hide blue focus ring + selection when suppressing */}
       <style jsx global>{`
         .no-focus-chrome input:focus {
           outline: none !important;

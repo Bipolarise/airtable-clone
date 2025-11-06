@@ -54,11 +54,10 @@ type ViewHeaderBarProps = {
   onChangeHiddenMap?: (hiddenById: Record<string, boolean>) => void;
   seedHiddenMap?: Record<string, boolean>;
 
-  /** NEW: hook up to the external left-side ViewsPanel */
+  /** Toggle the left-side ViewsPanel */
   onToggleViews?: () => void;
-  onViewsHoverStart?: () => void;
-  onViewsHoverEnd?: () => void;
-  /** NEW: label for the current view (e.g., "Grid view 2") */
+
+  /** Label for the current view (e.g., "Grid view 2") */
   activeViewName?: string;
 };
 
@@ -67,12 +66,23 @@ const FILTER_ACTIVE_BG = "#DEF7D9";
 const FILTER_ACTIVE_RING_BASE = "#DEF7D9";
 const FILTER_ACTIVE_RING_HOVER = "#6B9E6F";
 
-/* ---- Exclusions: labels that can NEVER be hidden or shown in the modal ---- */
+/* ---- Exclusions ---- */
 const EXCLUDED_LABELS = new Set(["name"]);
 const isExcluded = (f: FieldOptionForModal) =>
   EXCLUDED_LABELS.has(f.label.toLowerCase());
 
-/* -------------------------------- Component -------------------------------- */
+function rid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `id_${Math.random().toString(36).slice(2, 9)}`;
+}
+function shallowEqualMap(a: Record<string, boolean>, b: Record<string, boolean>) {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const k of aKeys) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   const {
     onAddDemoRows,
@@ -84,8 +94,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     onChangeConditions,
     onChangeHiddenMap,
     onToggleViews,
-    onViewsHoverStart,
-    onViewsHoverEnd,
     activeViewName,
     seedHiddenMap,
   } = props;
@@ -146,39 +154,38 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
 
   /* ---------------- Hide / Show fields ---------------- */
   const [hiddenById, setHiddenById] = useState<Record<string, boolean>>({});
+  const lastSentRef = useRef<Record<string, boolean>>({});
 
-  // If a seed is provided, force excluded fields (e.g., Name) to be visible.
   useEffect(() => {
     if (!seedHiddenMap) return;
     const corrected: Record<string, boolean> = { ...seedHiddenMap };
     for (const f of fieldOptions) if (isExcluded(f)) corrected[f.id] = false;
-    setHiddenById(corrected);
+
+    setHiddenById((prev) => (shallowEqualMap(prev, corrected) ? prev : corrected));
+    lastSentRef.current = corrected;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedHiddenMap, fieldOptions]);
 
-  useEffect(() => {
-    onChangeHiddenMap?.(hiddenById);
-  }, [hiddenById, onChangeHiddenMap]);
+  const commitHiddenMap = (next: Record<string, boolean>) => {
+    setHiddenById((prev) => (shallowEqualMap(prev, next) ? prev : next));
+    if (!shallowEqualMap(next, lastSentRef.current)) {
+      lastSentRef.current = next;
+      onChangeHiddenMap?.(next);
+    }
+  };
 
   const toggleHidden = (id: string) =>
-    setHiddenById((m) => ({ ...m, [id]: !m[id] }));
-
-  // Hide all fields that are *in the modal* (exclude Name)
-  const hideAll = () =>
-    setHiddenById((m) => {
-      const next = { ...m };
-      for (const f of fieldOptions) {
-        next[f.id] = isExcluded(f) ? false : true;
-      }
-      return next;
-    });
-
-  // Show all fields
-  const showAll = () =>
-    setHiddenById((m) => {
-      const next = { ...m };
-      for (const f of fieldOptions) next[f.id] = false;
-      return next;
-    });
+    commitHiddenMap({ ...hiddenById, [id]: !hiddenById[id] });
+  const hideAll = () => {
+    const next: Record<string, boolean> = { ...hiddenById };
+    for (const f of fieldOptions) next[f.id] = isExcluded(f) ? false : true;
+    commitHiddenMap(next);
+  };
+  const showAll = () => {
+    const next: Record<string, boolean> = { ...hiddenById };
+    for (const f of fieldOptions) next[f.id] = false;
+    commitHiddenMap(next);
+  };
 
   const iconForLabel = (label: string, type: "TEXT" | "NUMBER"): ReactNode => {
     const cls = "h-4 w-4 text-neutral-700";
@@ -234,7 +241,7 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
           <svg className={cls} viewBox="0 0 16 16" fill="currentColor">
             <path
               fillRule="nonzero"
-              d="M6 2C5.86739 2 5.74021 2.05268 5.64645 2.14645C5.55268 2.24021 5.5 2.36739 5.5 2.5V5.5H2.5C2.36739 5.5 2.24021 5.55268 2.14645 5.64645C2.05268 5.74021 2 5.86739 2 6C2 6.13261 2.05268 6.25979 2.14645 6.35355C2.24021 6.44732 2.36739 6.5 2.5 6.5H5.5V9.5H2.5C2.36739 9.5 2.24021 9.55268 2.14645 9.64645C2.05268 9.74021 2 9.86739 2 10C2 10.1326 2.05268 10.2598 2.14645 10.3536C2.24021 10.4473 2.36739 10.5 2.5 10.5H5.5V13.5C5.5 13.6326 5.55268 13.7598 5.64645 13.8536C5.74021 13.9473 5.86739 14 6 14C6.13261 14 6.25979 13.9473 6.35355 13.8536C6.44732 13.7598 6.5 13.6326 6.5 13.5V10.5H9.5V13.5C9.5 13.6326 9.55268 13.7598 9.64645 13.8536C9.74021 13.9473 9.86739 14 10 14C10.1326 14 10.25979 13.9473 10.3536 13.8536C10.4473 13.7598 10.5 13.6326 10.5 13.5V10.5H13.5C13.6326 10.5 13.7598 10.4473 13.8536 10.3536C13.9473 10.2598 14 10.1326 14 10C14 9.86739 13.9473 9.74021 13.8536 9.64645C13.7598 9.55268 13.6326 9.5 13.5 9.5H10.5V6.5H13.5C13.6326 6.5 13.7598 6.44732 13.8536 6.35355C13.9473 6.25979 14 6.1326 14 6C14 5.86739 13.9473 5.74021 13.8536 5.64645C13.7598 5.55268 13.6326 5.5 13.5 5.5H10.5V2.5C10.5 2.36739 10.4473 2.24021 10.3536 2.14645C10.2598 2.05268 10.1326 2 10 2ZM6.5 6.5H9.5V9.5H6.5V6.5Z"
+              d="M6 2C5.86739 2 5.74021 2.05268 5.64645 2.14645C5.55268 2.24021 5.5 2.36739 5.5 2.5V5.5H2.5C2.36739 5.5 2.24021 5.55268 2.14645 5.64645C2.05268 5.74021 2 5.86739 2 6C2 6.13261 2.05268 6.25979 2.14645 6.3536C2.24021 6.4473 2.36739 6.5 2.5 6.5H5.5V9.5H2.5C2.36739 9.5 2.24021 9.55268 2.14645 9.64645C2.05268 9.74021 2 9.86739 2 10C2 10.1326 2.05268 10.2598 2.14645 10.3536C2.24021 10.4473 2.36739 10.5 2.5 10.5H5.5V13.5C5.5 13.6326 5.55268 13.7598 5.64645 13.8536C5.74021 13.9473 5.86739 14 6 14C6.13261 14 6.25979 13.9473 6.35355 13.8536C6.44732 13.7598 6.5 13.6326 6.5 13.5V10.5H9.5V13.5C9.5 13.6326 9.55268 13.7598 9.64645 13.8536C9.74021 13.9473 9.86739 14 10 14C10.1326 14 10.25979 13.9473 10.3536 13.8536C10.4473 13.7598 10.5 13.6326 10.5 13.5V10.5H13.5C13.6326 10.5 13.7598 10.4473 13.8536 10.3536C13.9473 10.2598 14 10.1326 14 10C14 9.86739 13.9473 9.74021 13.8536 9.64645C13.7598 9.55268 13.6326 9.5 13.5 9.5H10.5V6.5H13.5C13.6326 6.5 13.7598 6.44732 13.8536 6.35355C13.9473 6.25979 14 6.1326 14 6C14 5.86739 13.9473 5.74021 13.8536 5.64645C13.7598 5.55268 13.6326 5.5 13.5 5.5H10.5V2.5C10.5 2.36739 10.4473 2.24021 10.3536 2.14645C10.2598 2.05268 10.1326 2 10 2ZM6.5 6.5H9.5V9.5H6.5V6.5Z"
             />
           </svg>
         );
@@ -250,7 +257,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     }
   };
 
-  /* Build the list for the modal: exclude Name entirely */
   const hideFields: HideFieldsModalField[] = useMemo(
     () =>
       fieldOptions
@@ -265,7 +271,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     [fieldOptions, hiddenById]
   );
 
-  /* ---------------- UI bits ---------------- */
   const filterBtnClass =
     "flex items-center gap-2 rounded px-2 h-7 " +
     (activeCount > 0
@@ -275,7 +280,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   const filterLabel =
     activeCount > 0 && filteredBy ? `Filtered by ${filteredBy}` : "Filter";
 
-  /* ---------------- render ---------------- */
   return (
     <div className="border-b border-neutral-200 bg-white">
       <div className="flex h-12 items-center justify-between px-4 text-[13px] text-neutral-700">
@@ -283,9 +287,12 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
         <div className="flex items-center gap-2">
           <button
             className="flex items-center rounded px-1.5 py-1 hover:bg-neutral-100"
-            onClick={onToggleViews}
-            onMouseEnter={onViewsHoverStart}
-            onMouseLeave={onViewsHoverEnd}
+            // Block the document-level outside-click handler from seeing this event
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleViews?.();
+            }}
             aria-label="Views"
             title="Views"
           >
@@ -324,7 +331,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
             </span>
           </button>
 
-          {/* Hide / Show fields */}
           <HideFieldsButton
             hideFields={hideFields}
             onToggle={toggleHidden}
@@ -332,7 +338,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
             onShowAll={showAll}
           />
 
-          {/* FILTER pill */}
           <button
             ref={filterBtnRef}
             onClick={openAppropriate}
@@ -427,7 +432,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   );
 }
 
-/* HideFields trigger grouped to keep the main render tidy */
 function HideFieldsButton({
   hideFields,
   onToggle,
@@ -464,10 +468,4 @@ function HideFieldsButton({
       )}
     </>
   );
-}
-
-/* small util */
-function rid() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `id_${Math.random().toString(36).slice(2, 9)}`;
 }

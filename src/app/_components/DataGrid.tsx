@@ -44,70 +44,121 @@ export default function DataGrid<TData>({
 
   // fixed bottom scrollbar
   const bottomScrollRef = useRef<HTMLDivElement | null>(null);
-  const [showHBar, setShowHBar] = useState(false);
-  const [scrollContentW, setScrollContentW] = useState(0);
+
+  // Consolidated bar UI state
+  const [bar, setBar] = useState(() => ({
+    left: 0,
+    width: 0,
+    contentW: 0,
+    showH: false,
+  }));
+  const showHRef = useRef(bar.showH); // for hysteresis
 
   const tableElRef = useRef<HTMLTableElement | null>(null);
 
-  const [barLeft, setBarLeft] = useState(0);
-  const [barWidth, setBarWidth] = useState(0);
-
+  // ---------- layout / measurement ----------
   useEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
 
+    let raf: number | null = null;
+    let destroyed = false;
+
+    const round = (n: number) => Math.max(0, Math.round(n));
+    const schedule = () => {
+      if (raf != null) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    };
+
+    // Hysteresis band in px to avoid show/hide flip-flop
+    const HYST = 8;
+
     const update = () => {
-      // bar positioning follows the VERTICAL scroller (parent) viewport
+      if (destroyed) return;
+
       const vScroller = containerRef.current ?? grid;
       const rect = vScroller.getBoundingClientRect();
-      setBarLeft(Math.max(0, Math.min(rect.left, window.innerWidth)));
-      setBarWidth(Math.max(0, Math.min(rect.width, window.innerWidth - rect.left)));
 
+      const rectLeft = round(rect.left);
+      const rectWidth = round(rect.width);
+
+      const nextLeft = Math.min(rectLeft, window.innerWidth);
+      const nextWidth = Math.min(rectWidth, Math.max(0, window.innerWidth - rectLeft));
+
+      // visible columns -> expected width
       const vCols = table.getVisibleLeafColumns().length;
       const expectedWidth =
         (vCols > 0 ? INDEX_W : 0) + Math.max(0, vCols - 1) * CELL_W + ADD_BTN_W + GAP_W;
 
-      const domScrollW = (tableElRef.current?.scrollWidth ?? grid.scrollWidth) || 0;
-      const contentW = Math.max(expectedWidth, domScrollW);
+      // prefer real DOM scrollWidth (of the grid content) vs expectation
+      // Use the grid’s own scrollWidth to avoid table mount/unmount churn
+      const domScrollW = grid.scrollWidth || 0;
+      const nextContentW = Math.max(expectedWidth, domScrollW);
 
-      setScrollContentW(contentW);
-      setShowHBar(contentW > grid.clientWidth + 1);
+      const clientW = round(grid.clientWidth);
+
+      // Hysteresis: once shown, keep showing until contentW <= clientW - HYST
+      // once hidden, only show when contentW >= clientW + HYST
+      let nextShowH = showHRef.current;
+      if (!showHRef.current) {
+        nextShowH = nextContentW >= clientW + HYST;
+      } else {
+        nextShowH = nextContentW > clientW - HYST;
+      }
+
+      // only commit if something actually changed
+      setBar((prev) => {
+        if (
+          prev.left === nextLeft &&
+          prev.width === nextWidth &&
+          prev.contentW === nextContentW &&
+          prev.showH === nextShowH
+        ) {
+          return prev;
+        }
+        showHRef.current = nextShowH;
+        return {
+          left: nextLeft,
+          width: nextWidth,
+          contentW: nextContentW,
+          showH: nextShowH,
+        };
+      });
     };
 
-    update();
-    const roGrid = new ResizeObserver(update);
+    // initial
+    schedule();
+
+    // Observe ONLY the grid container; not the table DOM
+    const roGrid = new ResizeObserver(schedule);
     roGrid.observe(grid);
 
-    const content = tableElRef.current;
-    const roContent = content ? new ResizeObserver(update) : null;
-    if (content) roContent!.observe(content);
+    // Window size changes can affect measurements
+    const onResize = () => schedule();
+    window.addEventListener("resize", onResize, { passive: true });
 
-    const mo = content ? new MutationObserver(update) : null;
-    if (content) mo!.observe(content, { attributes: true, childList: true, subtree: true });
-
-    window.addEventListener("resize", update, { passive: true });
-    window.addEventListener("scroll", update, { passive: true });
+    // No window scroll listener needed; left/width track viewport via rect
 
     return () => {
+      destroyed = true;
+      if (raf != null) cancelAnimationFrame(raf);
       roGrid.disconnect();
-      roContent?.disconnect();
-      mo?.disconnect();
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", onResize);
     };
-  }, [containerRef, table]);
+    // IMPORTANT: keep deps stable; do NOT include `table`
+  }, [containerRef]);
 
-  // sync main/grid horizontal scroll with fixed bar
+  // ---------- sync main/grid horizontal scroll with fixed bar ----------
   const syncingRef = useRef(false);
   const onMainScroll: React.UIEventHandler<HTMLDivElement> = () => {
     if (syncingRef.current) return;
     const grid = gridRef.current;
-    const bar = bottomScrollRef.current;
-    if (!grid || !bar) return;
+    const barEl = bottomScrollRef.current;
+    if (!grid || !barEl) return;
     const next = grid.scrollLeft;
-    if (Math.abs(bar.scrollLeft - next) < 1) return;
+    if (Math.abs(barEl.scrollLeft - next) < 1) return;
     syncingRef.current = true;
-    bar.scrollLeft = next;
+    barEl.scrollLeft = next;
     requestAnimationFrame(() => (syncingRef.current = false));
   };
   const onBarScroll: React.UIEventHandler<HTMLDivElement> = (e) => {
@@ -121,9 +172,9 @@ export default function DataGrid<TData>({
     requestAnimationFrame(() => (syncingRef.current = false));
   };
   const onBarWheel: React.WheelEventHandler<HTMLDivElement> = (e) => {
-    const bar = bottomScrollRef.current;
-    if (!bar) return;
-    bar.scrollLeft += e.deltaY || e.deltaX;
+    const barEl = bottomScrollRef.current;
+    if (!barEl) return;
+    barEl.scrollLeft += e.deltaY || e.deltaX;
   };
 
   return (
@@ -357,15 +408,15 @@ export default function DataGrid<TData>({
       </div>
 
       {/* fixed bottom horizontal scrollbar */}
-      {showHBar && (
+      {bar.showH && (
         <div
           ref={bottomScrollRef}
           onScroll={onBarScroll}
           onWheel={onBarWheel}
           className="fixed bottom-0 z-30 h-4 overflow-x-scroll overflow-y-hidden bg-transparent border-0 grid-scroll"
-          style={{ left: barLeft, width: barWidth }}
+          style={{ left: bar.left, width: bar.width }}
         >
-          <div style={{ width: scrollContentW, height: 1 }} />
+          <div style={{ width: bar.contentW, height: 1 }} />
         </div>
       )}
     </>
