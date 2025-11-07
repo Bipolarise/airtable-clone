@@ -1039,15 +1039,52 @@ export default function BasePage() {
   const onPrev = useCallback(() => goto(hitIndex - 1), [goto, hitIndex]);
   const onNext = useCallback(() => goto(hitIndex + 1), [goto, hitIndex]);
 
-  /* ---------------- row-aware prefetch before the end of 200 ---------------- */
+  /* ---------------- scroll container + sentinel ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
-  // tune these to taste
-  const ROW_H = 36; // ~h-9 cell height
-  const ROW_PREFETCH_THRESHOLD_ROWS = 100; // start the next fetch when <120 rows remain below viewport
-  const MIN_PAGE_BUFFER = 3; // try to keep at least 3 pages (3*200 rows) ahead
-  const MAX_PREFETCH_PAGES_PER_PARAM = 16; // safety cap per search/filter combo
-  const SPECULATIVE_BURST_PAGES = 2; // when very close or just loaded, fetch up to 2 pages quickly
+  // IntersectionObserver-based prefetch (kick off next page before we see the end)
+  useEffect(() => {
+    const rootEl = gridScrollRef.current;
+    const target = loadMoreRef.current;
+    if (!rootEl || !target) return;
+
+    let pending = false;
+
+    const onIntersect: IntersectionObserverCallback = async (entries) => {
+      // Pick any intersecting entry (there can be more than one)
+      const first = entries.find((e) => e.isIntersecting);
+      if (!first) return;
+
+      if (!rowsQ.hasNextPage || rowsQ.isFetchingNextPage) return;
+      if (pending) return;
+      pending = true;
+      try {
+        await rowsQ.fetchNextPage();
+      } finally {
+        pending = false;
+      }
+    };
+
+    const io = new IntersectionObserver(onIntersect, {
+      root: rootEl,
+      rootMargin: "800px 0px",
+      threshold: 0,
+    });
+
+    io.observe(target);
+    return () => io.disconnect();
+  }, [rowsQ.hasNextPage, rowsQ.isFetchingNextPage, rowsQ.fetchNextPage]);
+
+  /* ---------------- proactive fill-ahead (buffered prefetch) ---------------- */
+  // Tunables
+  const PAGE_SIZE = 200;
+  const ROW_H = 36; // px, approximate row height
+  const ROW_PREFETCH_THRESHOLD_ROWS = 100; // when fewer than this remain below viewport, prefetch
+  const MIN_PAGE_BUFFER = 4; // always try to keep at least this many pages loaded
+  const PREFETCH_ROWS_BUDGET = 20_000; // soft cap; increase or set to Infinity
+  const MAX_PREFETCH_PAGES_PER_PARAM = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
+  const SPECULATIVE_BURST_PAGES = 2;
 
   useEffect(() => {
     const el = gridScrollRef.current;
@@ -1070,7 +1107,7 @@ export default function BasePage() {
       if (!canFetch()) return false;
       await rowsQ.fetchNextPage();
       fetchedForThisParam++;
-      // let layout settle so scrollHeight updates before we decide to fetch again
+      // let scrollHeight update before next decision
       await new Promise(requestAnimationFrame);
       return true;
     };
@@ -1082,25 +1119,26 @@ export default function BasePage() {
       }
     };
 
-    const fillAhead = async (isAggressive = false) => {
+    const fillAhead = async (aggressive = false) => {
       if (filling) return;
       filling = true;
       try {
-        // 1) if we're within row threshold, keep fetching until we have a cushion
+        // 1) If too few rows remain below, fetch until we have a cushion
         while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
           const ok = await doFetch();
           if (!ok) break;
         }
 
-        // 2) keep a minimum page buffer ahead of the viewport
-        const pagesLoaded = rowsQ.data?.pages?.length ?? 0;
-        while (canFetch() && pagesLoaded + 0 < MIN_PAGE_BUFFER + 1) {
+        // 2) Keep a minimum page buffer regardless of scroll position
+        let pagesLoaded = rowsQ.data?.pages?.length ?? 0;
+        while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER + 1) {
           const ok = await doFetch();
           if (!ok) break;
+          pagesLoaded++; // reflect the newly fetched page
         }
 
-        // 3) aggressive burst when user is very close or we just mounted/changed params
-        if (isAggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
+        // 3) When very close or on mount/param change, speculatively grab a couple more
+        if (aggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
           await burstFetch(SPECULATIVE_BURST_PAGES);
         }
       } finally {
@@ -1108,7 +1146,7 @@ export default function BasePage() {
       }
     };
 
-    // fire on scroll & wheel for slightly faster reaction on rapid flicks
+    // Respond to scroll/wheel quickly
     let ticking = false;
     const onScrollish = () => {
       if (!canFetch()) return;
@@ -1122,10 +1160,8 @@ export default function BasePage() {
       });
     };
 
-    // reset burst limiter for this param combo
+    // Reset per search/filter/table combo, then aggressively fill at start
     fetchedForThisParam = 0;
-
-    // initial/param-change fill — aggressive to hide first boundary quickly
     void fillAhead(true);
 
     el.addEventListener("scroll", onScrollish, { passive: true });
@@ -1138,12 +1174,11 @@ export default function BasePage() {
       el.removeEventListener("wheel", onScrollish);
       ro.disconnect();
     };
-  // re-run when pages/filters/search change
   }, [
+    filteredRows.length,
     rowsQ.hasNextPage,
     rowsQ.isFetchingNextPage,
     rowsQ.data?.pages?.length,
-    filteredRows.length,
     debouncedSearch,
     filterConditions,
   ]);
@@ -1271,9 +1306,12 @@ export default function BasePage() {
                 onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
                 onAddTextColumn={handleAddTextColumn}
                 onAddNumberColumn={handleAddNumberColumn}
-                showLoadingMore={false}
+                showLoadingMore={false} // no "loading more…" UI
               />
             )}
+
+            {/* Sentinel to trigger loading the next page */}
+            <div ref={loadMoreRef} style={{ height: 1 }} />
             {/* when gridLoading === true, this area stays intentionally empty */}
           </div>
 

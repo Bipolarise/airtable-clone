@@ -1,153 +1,218 @@
 // src/app/_components/home-shell.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { api } from "~/trpc/react";
 import Sidebar from "./Sidebar";
 import BaseCard from "./BaseCard";
+import { IconBell } from "~/app/_icons/IconBell";
+import { IconQuestion } from "~/app/_icons/IconQuestion";
+import FlyoutNav from "./FlyoutNav";
+
+const HEADER_H = 56; // h-14
+const RAIL_W = 60;   // quick rail width
 
 export default function HomeShell() {
-  const { data: session, status } = useSession(); // "loading" | "authenticated" | "unauthenticated"
+  const { data: session, status } = useSession();
+  const [navOpen, setNavOpen] = useState(false);
 
-  // Only call protected tRPC once we are authenticated
   const { data: bases, isLoading } = api.base.listMine.useQuery(undefined, {
     enabled: status === "authenticated",
   });
 
-  // Avatar fallback initial
   const userInitial = useMemo(() => {
     const n = session?.user?.name?.[0];
     const e = session?.user?.email?.[0];
     return (n ?? e ?? "U").toUpperCase();
   }, [session?.user?.name, session?.user?.email]);
 
-  // Always land on "/" after Google sign-in
-  const goGoogle = () => {
-    void signIn("google", { callbackUrl: "/" });
+  const goGoogle = () => void signIn("google", { callbackUrl: "/" });
+  const handleSignOut = async () => {
+    await signOut({ redirect: true, callbackUrl: "/api/auth/signin?callbackUrl=/" });
   };
 
-  // Sign out, then show the NextAuth sign-in screen with a callback back to "/"
-  const handleSignOut = async () => {
-    await signOut({
-      redirect: true,
-      callbackUrl: "/api/auth/signin?callbackUrl=/",
-    });
-  };
+  // Ctrl/Cmd+K focus search
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isK = e.key.toLowerCase() === "k";
+      const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+      const combo = (isMac && e.metaKey) || (!isMac && e.ctrlKey);
+      if (isK && combo) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select?.();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Ignore outside-click for this toggle button
+  const toggleRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <div className="grid min-h-screen grid-cols-[240px_1fr] bg-neutral-100 text-neutral-900">
-      {/* LEFT: Sidebar */}
-      <Sidebar />
+    <div className="min-h-screen bg-neutral-100 text-neutral-900 flex flex-col overflow-hidden">
+      {/* Header — box-border so the 1px border doesn't add height */}
+      <header className="sticky top-0 z-40 w-full h-14 box-border border-b border-neutral-200 bg-white">
+        <div className="w-full h-full px-3 sm:px-4">
+          <div className="grid h-full grid-cols-[auto_1fr_auto] items-center gap-4">
+            {/* LEFT: Menu + Brand */}
+            <div className="flex items-center gap-3">
+              <button
+                ref={toggleRef}
+                onClick={() => setNavOpen((o) => !o)}
+                aria-label="Toggle navigation"
+                aria-expanded={navOpen}
+                className="inline-flex h-10 w-10 items-center justify-center rounded hover:bg-neutral-100"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
 
-      {/* RIGHT: Main */}
-      <div className="flex min-h-screen flex-col">
-        {/* Header: centered search, auth on the right */}
-        <div className="sticky top-0 z-10 border-b border-neutral-200 bg-white">
-          <div className="mx-auto w-full max-w-[1160px]">
-            <div className="grid h-12 grid-cols-[1fr_auto] items-center gap-3 px-3 sm:px-4">
-              {/* CENTERED SEARCH */}
-              <div className="flex w-full justify-center">
-                <div className="flex w-full max-w-[560px] items-center rounded-full border border-neutral-300 bg-neutral-50 pl-3 pr-2">
-                  <svg
-                    width="18"
-                    height="18"
-                    className="mr-2 shrink-0 opacity-60"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                  >
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  </svg>
-                  <input
-                    placeholder="Search..."
-                    className="h-8 min-w-0 flex-1 bg-transparent text-[13px] outline-none"
-                  />
-                  <span className="ml-2 shrink-0 whitespace-nowrap text-[11px] text-neutral-600">
-                    ctrl K
-                  </span>
-                </div>
+              <div className="flex items-center gap-2.5">
+                <Image src="/airtable-favicon.ico" alt="Airtable" width={28} height={28} />
+                <span className="text-[18px] font-semibold tracking-[-0.01em]">Airtable</span>
               </div>
+            </div>
 
-              {/* RIGHT ACTIONS */}
-              <div className="ml-auto flex items-center justify-end gap-2">
-                <button className="rounded-md border border-neutral-300 px-3 py-1.5 text-[13px] hover:bg-neutral-50">
-                  Help
+            {/* CENTER: Search */}
+            <div className="flex w-full justify-center">
+              <label className="flex w-full max-w-[360px] items-center rounded-full border border-neutral-300 bg-white pl-3 pr-3 py-0.5">
+                <svg
+                  width="16"
+                  height="16"
+                  className="mr-2 shrink-0 opacity-60"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  ref={searchRef}
+                  placeholder="Search..."
+                  title="Search (Ctrl/⌘ + K)"
+                  className="h-7 min-w-0 flex-1 bg-transparent text-[12.5px] outline-none focus:outline-none"
+                />
+                <span className="ml-3 shrink-0 whitespace-nowrap text-[10.5px] text-neutral-600">
+                  ctrl K
+                </span>
+              </label>
+            </div>
+
+            {/* RIGHT: Help + Bell + User */}
+            <div className="ml-auto flex items-center justify-end gap-2.5">
+              <button
+                className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] text-neutral-800 hover:bg-neutral-50"
+                title="Help"
+              >
+                <IconQuestion className="h-4 w-4" />
+                <span>Help</span>
+              </button>
+
+              <button
+                className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-700 shadow-[0_0_0_1px_rgba(0,0,0,0.02)] hover:bg-neutral-50"
+                aria-label="Notifications"
+                title="Notifications"
+              >
+                <IconBell className="h-4 w-4" />
+              </button>
+
+              {status === "loading" && <div className="h-8 w-8 animate-pulse rounded-full bg-neutral-200" />}
+
+              {status === "unauthenticated" && (
+                <button
+                  onClick={goGoogle}
+                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-[13px] hover:bg-neutral-50"
+                >
+                  Sign in
                 </button>
+              )}
 
-                {/* User menu / auth actions */}
-                {status === "loading" && (
-                  <div className="h-8 w-8 animate-pulse rounded-full bg-neutral-200" />
-                )}
-
-                {status === "unauthenticated" && (
-                  <button
-                    onClick={goGoogle}
-                    className="rounded-md border border-neutral-300 px-3 py-1.5 text-[13px] hover:bg-neutral-50"
-                  >
-                    Sign in
-                  </button>
-                )}
-
-                {status === "authenticated" && (
-                  <details className="relative">
-                    <summary className="list-none cursor-pointer">
-                      {session?.user?.image ? (
-                        // Use <img> so we don't need next.config image domains
-                        <img
-                          src={session.user.image}
-                          alt={session?.user?.name ?? "User"}
-                          width={32}
-                          height={32}
-                          className="h-8 w-8 rounded-full object-cover"
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="h-8 w-8 rounded-full bg-neutral-300 text-center leading-8 text-white">
-                          {userInitial}
-                        </div>
-                      )}
-                    </summary>
-
-                    <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg">
-                      <div className="px-3 py-2">
-                        <div className="truncate text-[13px] font-medium">
-                          {session?.user?.name ?? "Signed in"}
-                        </div>
-                        <div className="truncate text-[12px] text-neutral-500">
-                          {session?.user?.email}
-                        </div>
+              {status === "authenticated" && (
+                <details className="relative">
+                  <summary className="list-none cursor-pointer">
+                    {session?.user?.image ? (
+                      <img
+                        src={session.user.image}
+                        alt={session?.user?.name ?? "User"}
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 rounded-full object-cover"
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="h-8 w-8 rounded-full bg-neutral-300 text-center leading-8 text-white">
+                        {userInitial}
                       </div>
-                      <div className="h-px bg-neutral-200" />
-                      <button
-                        className="w-full px-3 py-2 text-left text-[13px] hover:bg-neutral-50"
-                        onClick={handleSignOut}
-                      >
-                        Sign out
-                      </button>
+                    )}
+                  </summary>
+
+                  <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg">
+                    <div className="px-3 py-2">
+                      <div className="truncate text-[13px] font-medium">
+                        {session?.user?.name ?? "Signed in"}
+                      </div>
+                      <div className="truncate text-[12px] text-neutral-500">
+                        {session?.user?.email}
+                      </div>
                     </div>
-                  </details>
-                )}
-              </div>
+                    <div className="h-px bg-neutral-200" />
+                    <button
+                      className="w-full px-3 py-2 text-left text-[13px] hover:bg-neutral-50"
+                      onClick={handleSignOut}
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </details>
+              )}
             </div>
           </div>
         </div>
+      </header>
 
-        {/* Main content container */}
-        <div className="mx-auto w-full max-w-[1060px] px-6 py-5">
-          {/* Page title below header */}
+      {/* Flyout rail (no scrim) */}
+      <FlyoutNav
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        ignoreRef={toggleRef}
+        offsetTop={HEADER_H}
+        width={RAIL_W}
+      />
+
+      {/* MAIN AREA — fills the viewport below the header, no page scroll */}
+      <div
+        className="grid min-h-0 h-[calc(100dvh-56px)] overflow-hidden transition-all duration-150"
+        style={{
+          gridTemplateColumns: navOpen ? "1fr" : "240px 1fr",
+          paddingLeft: navOpen ? RAIL_W : 0,
+        }}
+      >
+        {!navOpen && (
+          <aside className="border-r border-neutral-200 overflow-hidden">
+            <Sidebar />
+          </aside>
+        )}
+
+        {/* Only this column scrolls */}
+        <main className="min-h-0 h-full overflow-auto px-6 py-5 min-w-0">
           <h1 className="mb-3 text-[22px] font-semibold">Home</h1>
 
-          {/* If session is loading */}
           {status === "loading" && (
             <div className="rounded-lg border border-neutral-200 bg-white p-5 text-sm text-neutral-600">
               Checking session…
             </div>
           )}
 
-          {/* If signed out, show CTA */}
           {status === "unauthenticated" && (
             <div className="rounded-lg border border-neutral-200 bg-white p-5">
               <div className="flex items-center justify-between">
@@ -167,10 +232,8 @@ export default function HomeShell() {
             </div>
           )}
 
-          {/* Authenticated content */}
           {status === "authenticated" && (
             <>
-              {/* Banner */}
               <div className="rounded-lg border border-neutral-200 bg-white p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -179,8 +242,8 @@ export default function HomeShell() {
                       <span className="text-blue-600">9 days</span>
                     </div>
                     <div className="mt-1 text-[13px] text-neutral-600">
-                      Keep the power you need to manage complex workflows, design
-                      interfaces, and more.
+                      Keep the power you need to manage complex workflows, design interfaces, and
+                      more.
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -194,7 +257,6 @@ export default function HomeShell() {
                 </div>
               </div>
 
-              {/* Quick cards */}
               <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                 <QuickCard
                   icon={<Spark />}
@@ -213,7 +275,6 @@ export default function HomeShell() {
                 />
               </div>
 
-              {/* Opened anytime */}
               <div className="mt-6">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-[13px] text-neutral-700">Opened anytime ▾</div>
@@ -235,23 +296,14 @@ export default function HomeShell() {
               </div>
             </>
           )}
-        </div>
+        </main>
       </div>
     </div>
   );
 }
 
-/* ---------- Small presentational bits ---------- */
-
-function QuickCard({
-  icon,
-  title,
-  desc,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  desc: string;
-}) {
+/* Small presentational bits */
+function QuickCard({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex items-start gap-3">
@@ -267,7 +319,6 @@ function QuickCard({
   );
 }
 
-/* icons */
 function Spark() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
