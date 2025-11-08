@@ -18,6 +18,13 @@ import DataGrid from "~/app/_components/DataGrid";
 import ViewHeaderBar from "~/app/_components/ViewHeaderBar";
 import SearchResultsModal from "~/app/_components/SearchResultsModal";
 import ViewsPanel, { type ViewItem } from "~/app/_components/ViewsPanel";
+import { IconFieldName } from "~/app/_icons/IconFieldName";
+import { IconFieldNotes } from "~/app/_icons/IconFieldNotes";
+import { IconFieldAssignee } from "~/app/_icons/IconFieldAssignee";
+import { IconFieldStatus } from "~/app/_icons/IconFieldStatus";
+import { IconFieldAttachment } from "~/app/_icons/IconFieldAttachment";
+import { IconFieldNumber } from "~/app/_icons/IconFieldNumber";
+import { IconTinyDot } from "~/app/_icons/IconTinyDot";
 import "~/styles/globals.css";
 import {
   type ColumnDef,
@@ -799,62 +806,35 @@ export default function BasePage() {
           const headerIcon = (() => {
             switch (c.name) {
               case "Name":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="evenodd"
-                      d="M8.44187 3.26606C8.35522 3.10237 8.18518 3 7.99998 3C7.81477 3 7.64474 3.10237 7.55808 3.26606L3.05808 11.7661C2.92888 12.0101 3.02198 12.3127 3.26603 12.4419C3.51009 12.5711 3.81267 12.478 3.94187 12.2339L5.12455 10H10.8754L12.0581 12.2339C12.1873 12.478 12.4899 12.5711 12.7339 12.4419C12.978 12.3127 13.0711 12.0101 12.9419 11.7661L8.44187 3.26606ZM10.346 9L7.99998 4.56863L5.65396 9H10.346Z"
-                    />
-                  </svg>
-                );
+                return <IconFieldName className="h-4 w-4 text-neutral-700" />;
+
               case "Notes":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="nonzero"
-                      d="M4.24999 3C4.43937 3 4.6125 3.107 4.6972 3.27639L6.4472 6.77639C6.5707 7.02338 6.47058 7.32372 6.22359 7.44721C5.9766 7.57071 5.67627 7.4706 5.55277 7.22361L5.17327 6.4646H3.3267L2.9472 7.22361C2.82371 7.4706 2.52337 7.57071 2.27638 7.44721C2.02939 7.32372 1.92928 7.02338 2.05277 6.77639L3.80277 3.27639C3.88747 3.107 4.0606 3 4.24999 3ZM3.8267 5.4646H4.67327L4.24999 4.61803L3.8267 5.4646Z M7.5 3.75C7.22386 3.75 7 3.97386 7 4.25C7 4.52614 7.22386 4.75 7.5 4.75H13.5C13.7761 4.75 14 4.52614 14 4.25C14 3.97386 13.7761 3.75 13.5 3.75H7.5Z M8 6.75C8 6.47386 8.22386 6.25 8.5 6.25H11.5C11.7761 6.25 12 6.47386 12 6.75C12 7.02614 11.7761 7.25 11.5 7.25H8.5C8.22386 7.25 8 7.02614 8 6.75Z M2 9.25C2 8.97386 2.22386 8.75 2.5 8.75H13.5C13.7761 8.75 14 9.97386 14 9.25C14 9.52614 13.7761 10.25 13.5 10.25H2.5C2.22386 10.25 2 9.97386 2 9.25Z M2 11.75C2 11.4739 2.22386 11.25 2.5 11.25H11.5C11.7761 11.25 12 11.4739 12 11.75C12 12.0261 11.7761 12.25 11.5 12.25H2.5C2.22386 12.25 2 12.0261 2 11.75Z"
-                    />
-                  </svg>
-                );
+              case "Notes 2":
+              case "Notes 3":
+                return <IconFieldNotes className="h-4 w-4 text-neutral-700" />;
+
               case "Assignee":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="nonzero"
-                      d="M8 9.49951C5.32109 9.49957 2.84382 10.93 1.50451 13.2501C1.43822 13.365 1.42025 13.5014 1.45457 13.6295C1.48888 13.7576 1.57267 13.8668 1.6875 13.9331C1.80235 13.9994 1.93883 14.0173 2.06691 13.983C2.195 13.9487 2.30419 13.8648 2.37048 13.75C3.53197 11.738 5.67677 10.4996 8 10.4995C10.3232 10.4995 12.4681 11.7379 13.6295 13.75C13.6958 13.8648 13.805 13.9487 13.9331 13.983C14.0612 14.0173 14.1976 13.9994 14.3125 13.9331C14.4273 13.8668 14.5111 13.7576 14.5454 13.6295C14.5797 13.5014 14.5611 13.365 14.4955 13.2501C13.1563 10.9299 10.679 9.49944 8 9.49951Z M8 1.5C5.52065 1.5 3.5 3.52065 3.5 6C3.5 8.47935 5.52065 10.4995 8 10.4995C10.4793 10.4995 12.5 8.47935 12.5 6C12.5 3.52065 10.4793 1.5 8 1.5ZM8 2.5C9.9389 2.5 11.5 4.0611 11.5 6C11.5 7.9389 9.9389 9.49951 8 9.49951C6.0611 9.49951 4.5 7.9389 4.5 6C4.5 4.0611 6.0611 2.5 8 2.5Z"
-                    />
-                  </svg>
-                );
+                return <IconFieldAssignee className="h-4 w-4 text-neutral-700" />;
+
               case "Status":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="nonzero"
-                      d="M5.77625 6.75073C5.64385 6.74375 5.5141 6.78963 5.41553 6.8783C5.36671 6.92222 5.32702 6.97532 5.29873 7.03458C5.27044 7.09384 5.2541 7.1581 5.25064 7.22367C5.24719 7.28925 5.25668 7.35486 5.27858 7.41677C5.30048 7.47868 5.33437 7.53566 5.3783 7.58447L7.6283 10.0845C7.67519 10.1366 7.73251 10.1782 7.79655 10.2068C7.86058 10.2353 7.9299 10.25 8 10.25C8.0701 10.25 8.13942 10.2353 8.20345 10.2068C8.26749 10.1782 8.32481 10.1366 8.3717 10.0845L10.6217 7.58447C10.6656 7.53566 10.6995 7.47868 10.7214 7.41677C10.7433 7.35486 10.7528 7.28925 10.7494 7.22367C10.7459 7.1581 10.7296 7.09384 10.7013 7.03458C10.673 6.97532 10.6333 6.92222 10.5845 6.8783C10.5357 6.83437 10.4787 6.80048 10.4168 6.77858C10.3549 6.75668 10.2892 6.74719 10.2237 6.75064C10.1581 6.7541 10.0938 6.77044 10.0346 6.79873C9.97532 6.82702 9.92222 6.86671 9.8783 6.91553L8 9.00256L6.1217 6.91553C6.07777 6.86672 6.02464 6.82704 5.96537 6.79877C5.90609 6.77049 5.84183 6.75417 5.77625 6.75073Z M8 1.5C4.41604 1.5 1.5 4.41604 1.5 8C1.5 11.5839 4.41603 14.5 8 14.5C11.5839 14.5 14.5 11.5839 14.5 8C14.5 4.41603 11.5839 1.5 8 1.5ZM8 2.5C11.0435 2.5 13.5 4.95647 13.5 8C13.5 11.0435 11.0435 13.5 8 13.5C4.95647 13.5 2.5 11.0435 2.5 8C2.5 4.95647 4.95647 2.5 8 2.5Z"
-                    />
-                  </svg>
-                );
+                return <IconFieldStatus className="h-4 w-4 text-neutral-700" />;
+
               case "Attachments":
               case "Attachment...":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="nonzero"
-                      d="M9.5 1.5C9.36739 1.5 9.24021 1.55268 9.14645 1.64645C9.05268 1.74021 9 1.86739 9 2V5.5C9.00001 5.6326 9.0527 5.75977 9.14646 5.85354C9.24023 5.9473 9.3674 5.99999 9.5 6H13C13.1326 6 13.2598 5.94732 13.3536 5.85355C13.4473 5.75979 13.5 5.63261 13.5 5.5C13.5 5.36739 13.4473 5.24021 13.3536 5.14645C13.2598 5.05268 13.1326 5 13 5H10V2C10 1.86739 9.94732 1.74021 9.85355 1.64645C9.75979 1.55268 9.63261 1.5 9.5 1.5Z M3.5 1.5C2.95364 1.5 2.5 1.95364 2.5 2.5V13.5C2.50007 14.0463 2.95357 14.4999 3.49988 14.5C3.49984 14.5 3.49992 14.5 3.49988 14.5H12.5C13.0464 14.5 13.5 14.0464 13.5 13.5V5.5C13.5 5.36739 13.4473 5.24021 13.3536 5.14645L9.85355 1.64645C9.75979 1.55268 9.63261 1.5 9.5 1.5H3.5ZM3.5 2.5H9.29285L12.5 5.70715V13.5H3.50012L3.5 2.5Z"
-                    />
-                  </svg>
-                );
+              case "Attachment Summary":
+                return <IconFieldAttachment className="h-4 w-4 text-neutral-700" />;
+
               case "Number":
-                return (
-                  <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
-                    <path
-                      fillRule="nonzero"
-                      d="M6 2C5.86739 2 5.74021 2.05268 5.64645 2.14645C5.55268 2.24021 5.5 2.36739 5.5 2.5V5.5H2.5C2.36739 5.5 2.24021 5.55268 2.14645 5.64645C2.05268 5.74021 2 5.86739 2 6C2 6.13261 2.05268 6.25979 2.14645 6.3536C2.24021 6.4473 2.36739 6.5 2.5 6.5H5.5V9.5H2.5C2.36739 9.5 2.24021 9.55268 2.14645 9.64645C2.05268 9.74021 2 9.86739 2 10C2 10.1326 2.05268 10.2598 2.14645 10.3536C2.24021 10.4473 2.36739 10.5 2.5 10.5H5.5V13.5C5.5 13.6326 5.55268 13.7598 5.64645 13.8536C5.74021 13.9473 5.86739 14 6 14C6.13261 14 6.25979 13.9473 6.35355 13.8536C6.44732 13.7598 6.5 13.6326 6.5 13.5V10.5H9.5V13.5C9.5 13.6326 9.55268 13.7598 9.64645 13.8536C9.74021 13.9473 9.86739 14 10 14C10.1326 14 10.25979 13.9473 10.3536 13.8536C10.4473 13.7598 10.5 13.6326 10.5 13.5V10.5H13.5C13.6326 10.5 13.7598 10.4473 13.8536 10.3536C13.9473 10.2598 14 10.1326 14 10C14 9.86739 13.9473 9.74021 13.8536 9.64645C13.7598 9.55268 13.6326 9.5 13.5 9.5H10.5V6.5H13.5C13.6326 6.5 13.7598 6.44732 13.8536 6.35355C13.9473 6.25979 14 6.1326 14 6C14 5.86739 13.9473 5.74021 13.8536 5.64645C13.7598 5.55268 13.6326 5.5 13.5 5.5H10.5V2.5C10.5 2.36739 10.4473 2.24021 10.3536 2.14645C10.2598 2.05268 10.1326 2 10 2ZM6.5 6.5H9.5V9.5H6.5V6.5Z"
-                    />
-                  </svg>
-                );
-              default:
-                return <span className="h-1 w-1 rounded-full bg-neutral-500" />;
+                return <IconFieldNumber className="h-4 w-4 text-neutral-700" />;
+
+              default: {
+                // Make generic Single line text (type === "TEXT") use the Number icon too.
+                if (c.type === "TEXT") return <IconFieldName className="h-4 w-4 text-neutral-700" />;
+                // Fallback for any other numeric fields not named "Number"
+                if (c.type === "NUMBER") return <IconFieldNumber className="h-4 w-4 text-neutral-700" />;
+                // Final fallback (should rarely hit)
+                return <IconTinyDot className="h-1 w-1 text-neutral-500" />;
+              }
             }
           })();
 
@@ -1054,29 +1034,16 @@ export default function BasePage() {
   /* ---------------- scroll container ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
 
-  /* ---------------- row height measurement (real, not guessed) ---------------- */
-  const measuredRowHRef = useRef<number>(36);
+  /* ---------------- proactive fill-ahead (buffered prefetch) ---------------- */
+  // Tunables — keep PAGE_SIZE in sync with your API page size (200 here)
+  const PAGE_SIZE = 200;
+  const ROW_H = 36; // approximate row height in px
+  const ROW_PREFETCH_THRESHOLD_ROWS = 60;  // fetch when fewer than 60 rows remain below viewport
+  const MIN_PAGE_BUFFER = 3;               // always keep at least 3 pages loaded
+  const PREFETCH_ROWS_BUDGET = 20_000;     // safety cap per param set
+  const MAX_PREFETCH_PAGES_PER_PARAM = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
+  const SPECULATIVE_BURST_PAGES = 2;       // grab a bit extra opportunistically
 
-  const updateMeasuredRowHeight = useCallback(() => {
-    const root = gridScrollRef.current;
-    if (!root) return;
-
-    const anyRowEl =
-      root.querySelector('[data-grid-row="true"]') ||
-      root.querySelector(".dg-row") ||
-      root.querySelector('[role="row"]');
-
-    const h = anyRowEl instanceof HTMLElement ? anyRowEl.offsetHeight : 0;
-    if (h > 0 && Math.abs(h - measuredRowHRef.current) > 0.5) {
-      measuredRowHRef.current = h;
-    }
-  }, []);
-
-  useEffect(() => {
-    updateMeasuredRowHeight();
-  }, [rowsQ.data?.pages?.length, updateMeasuredRowHeight]);
-
-  /* ---------------- proactive fill-ahead (pixel + velocity based) ---------------- */
   useEffect(() => {
     const el = gridScrollRef.current;
     if (!el) return;
@@ -1084,24 +1051,15 @@ export default function BasePage() {
     let filling = false;
     let fetchedForThisParam = 0;
 
-    // Keep these in sync with your API
-    const PAGE_SIZE = 200;
-    const MIN_PAGE_BUFFER = 3;
-    const PREFETCH_ROWS_BUDGET = 20_000;
-    const MAX_PAGES = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
-
-    const baseThresholdPx = Math.max(1200, el.clientHeight * 2.5);
-    const HIGH_VELOCITY_BOOST = 1600;
-
-    // Velocity tracking (px per 100ms)
-    let lastTop = el.scrollTop;
-    let lastT = performance.now();
-    let velocityPxPer100 = 0;
+    const rowsLoaded = () => filteredRows.length;
+    const rowsVisible = () => Math.ceil(el.clientHeight / ROW_H);
+    const topIndex = () => Math.floor(el.scrollTop / ROW_H);
+    const remainingBelow = () => rowsLoaded() - (topIndex() + rowsVisible());
 
     const canFetch = () =>
       rowsQ.hasNextPage &&
       !rowsQ.isFetchingNextPage &&
-      fetchedForThisParam < MAX_PAGES;
+      fetchedForThisParam < MAX_PREFETCH_PAGES_PER_PARAM;
 
     const doFetch = async () => {
       if (!canFetch()) return false;
@@ -1118,21 +1076,17 @@ export default function BasePage() {
       }
     };
 
-    const remainingPxBelow = () =>
-      el.scrollHeight - el.scrollTop - el.clientHeight;
-
     const fillAhead = async (aggressive = false) => {
       if (filling) return;
       filling = true;
       try {
-        const velBoost = velocityPxPer100 > 800 ? HIGH_VELOCITY_BOOST : 0;
-        const thresholdPx = baseThresholdPx + velBoost;
-
-        while (canFetch() && remainingPxBelow() < thresholdPx) {
+        // Top-up if we're nearing the end of what we have
+        while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
           const ok = await doFetch();
           if (!ok) break;
         }
 
+        // Maintain minimum page buffer (smooth for fast wheels/trackpads)
         let pagesLoaded = rowsQ.data?.pages?.length ?? 0;
         while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER) {
           const ok = await doFetch();
@@ -1140,37 +1094,28 @@ export default function BasePage() {
           pagesLoaded++;
         }
 
-        if (aggressive || remainingPxBelow() < thresholdPx / 2) {
-          const extra = velocityPxPer100 > 800 ? 3 : 1;
-          await burstFetch(extra);
+        // Small speculative burst at mount/when running low
+        if (aggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
+          await burstFetch(SPECULATIVE_BURST_PAGES);
         }
-
-        updateMeasuredRowHeight();
       } finally {
         filling = false;
       }
     };
 
-    // Initial aggressive fill on param change
+    // On mount/param change: aggressively prefill
     fetchedForThisParam = 0;
     void fillAhead(true);
 
-    // Velocity-aware scroll handler
+    // Throttled listener for scroll/wheel/resize
     let ticking = false;
     const onScrollish = () => {
-      const now = performance.now();
-      const dt = Math.max(16, now - lastT);
-      const dy = Math.abs(el.scrollTop - lastTop);
-      velocityPxPer100 = (dy / dt) * 100;
-      lastT = now;
-      lastTop = el.scrollTop;
-
       if (!canFetch()) return;
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        if (remainingPxBelow() < baseThresholdPx) {
+        if (remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
           void fillAhead(false);
         }
       });
@@ -1179,33 +1124,13 @@ export default function BasePage() {
     el.addEventListener("scroll", onScrollish, { passive: true });
     el.addEventListener("wheel", onScrollish, { passive: true });
 
-    // Resize: top up if viewport grows
     const ro = new ResizeObserver(() => void fillAhead(false));
     ro.observe(el);
-
-    // Sentinel backstop so the user never hits literal bottom
-    const sentinel = document.createElement("div");
-    sentinel.setAttribute("aria-hidden", "true");
-    sentinel.style.height = "1px";
-    sentinel.style.width = "1px";
-    el.appendChild(sentinel);
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) void fillAhead(false);
-        }
-      },
-      { root: el, rootMargin: "800px 0px 0px 0px", threshold: 0 }
-    );
-    io.observe(sentinel);
 
     return () => {
       el.removeEventListener("scroll", onScrollish);
       el.removeEventListener("wheel", onScrollish);
       ro.disconnect();
-      io.disconnect();
-      sentinel.remove();
     };
   }, [
     filteredRows.length,
@@ -1214,7 +1139,6 @@ export default function BasePage() {
     rowsQ.data?.pages?.length,
     debouncedSearch,
     conditionsForQuery,
-    updateMeasuredRowHeight,
   ]);
 
   /* ---------------- measure header height for the ViewsPanel offset ---------------- */
@@ -1347,16 +1271,7 @@ export default function BasePage() {
               />
             )}
 
-            {/* Phantom spacer to keep scrollbar from bottoming out while next page loads */}
-            {!gridLoading && (
-              <div
-                style={{
-                  height: Math.max(0, (totalRecords - allRows.length)) * (measuredRowHRef.current || 36),
-                }}
-              />
-            )}
-
-            {/* kept for layout parity */}
+            {/* kept for layout parity; no observer attached */}
             <div style={{ height: 1 }} />
           </div>
 
