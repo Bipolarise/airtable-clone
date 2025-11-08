@@ -60,7 +60,9 @@ export default function HideFieldsModal({
   useLayoutEffect(() => {
     if (!anchorEl) return;
     const r = anchorEl.getBoundingClientRect();
-    setPos({ top: r.bottom + 8, left: Math.max(8, r.left) });
+    const panelW = panelRef.current?.offsetWidth ?? MODAL_WIDTH;
+    const left = Math.max(8, r.right - panelW);
+    setPos({ top: r.bottom + 8, left });
   }, [anchorEl]);
 
   useEffect(() => {
@@ -76,7 +78,9 @@ export default function HideFieldsModal({
     function onReflow() {
       if (!anchorEl) return;
       const r = anchorEl.getBoundingClientRect();
-      setPos({ top: r.bottom + 8, left: Math.max(8, r.left) });
+      const panelW = panelRef.current?.offsetWidth ?? MODAL_WIDTH;
+      const left = Math.max(8, r.right - panelW);
+      setPos({ top: r.bottom + 8, left });
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);

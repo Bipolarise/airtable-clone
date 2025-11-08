@@ -49,6 +49,12 @@ export const authConfig = {
   ],
   adapter: PrismaAdapter(db),
   secret: env.AUTH_SECRET,
+
+  // Use our landing page (/) instead of the built-in /api/auth/signin
+  pages: {
+    signIn: "/",
+  },
+
   callbacks: {
     session: ({ session, user }) => ({
       ...session,

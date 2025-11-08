@@ -3,6 +3,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { IconQuestion } from "~/app/_icons/IconQuestion";
 
 type FilterModalProps = {
   anchorEl: HTMLElement | null;
@@ -22,12 +23,34 @@ export default function FilterModal({
 
   useEffect(() => setMounted(true), []);
 
+  // --- helper: compute left so the RIGHT edges align ---
+  const updatePos = () => {
+    if (!anchorEl) return;
+    const r = anchorEl.getBoundingClientRect();
+
+    // Use actual rendered width if available; otherwise fall back to the fixed class width.
+    const panelW = panelRef.current?.offsetWidth ?? 420;
+
+    const padding = 8; // min gutter from viewport edges
+    const top = r.bottom + 8;
+
+    // Align right edges: left = anchor.right - panelWidth
+    let left = r.right - panelW;
+
+    // Clamp to viewport (avoid offscreen)
+    left = Math.max(padding, Math.min(window.innerWidth - panelW - padding, left));
+
+    setPos({ top, left });
+  };
+
+  // Initial position (after anchor exists)
   useLayoutEffect(() => {
     if (!anchorEl) return;
-    const rect = anchorEl.getBoundingClientRect();
-    setPos({ top: rect.bottom + 8, left: Math.max(8, rect.left) });
+    updatePos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchorEl]);
 
+  // Reposition on outside interactions / keys
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       if (!panelRef.current) return;
@@ -38,30 +61,35 @@ export default function FilterModal({
     function onDocKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
-    function onWinMove() {
-      if (!anchorEl) return;
-      const r = anchorEl.getBoundingClientRect();
-      setPos({ top: r.bottom + 8, left: Math.max(8, r.left) });
-    }
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onDocKey);
-    window.addEventListener("resize", onWinMove, { passive: true });
-    window.addEventListener("scroll", onWinMove, { passive: true });
     return () => {
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onDocKey);
-      window.removeEventListener("resize", onWinMove);
-      window.removeEventListener("scroll", onWinMove);
     };
   }, [anchorEl, onClose]);
 
-  const HelpIcon = (
-    <svg width="16" height="16" viewBox="0 0 24 24" className="inline-block align-[-2px]">
-      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.8-2 2.2-2 3.7" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="12" cy="17.2" r="1" />
-    </svg>
-  );
+  // Reposition on resize/scroll
+  useEffect(() => {
+    if (!anchorEl) return;
+    const onWinMove = () => updatePos();
+    window.addEventListener("resize", onWinMove, { passive: true });
+    window.addEventListener("scroll", onWinMove, { passive: true });
+    return () => {
+      window.removeEventListener("resize", onWinMove);
+      window.removeEventListener("scroll", onWinMove);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchorEl]);
+
+  // Reposition if the panel's measured width changes (e.g., fonts load)
+  useEffect(() => {
+    if (!panelRef.current) return;
+    const ro = new ResizeObserver(() => updatePos());
+    ro.observe(panelRef.current);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelRef.current]);
 
   if (!mounted) return null;
 
@@ -75,7 +103,15 @@ export default function FilterModal({
     >
       <div className="px-4 py-3">
         <div className="mb-2 text-[13px] text-neutral-500">
-          No filter conditions are applied <span className="text-neutral-400">{HelpIcon}</span>
+          No filter conditions are applied{" "}
+          <button
+            type="button"
+            title="Help"
+            aria-label="Help"
+            className="ml-1 inline-flex align-[-2px] rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+          >
+            <IconQuestion className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
 
         <div className="flex items-center gap-4">
@@ -83,21 +119,28 @@ export default function FilterModal({
           <button
             type="button"
             onClick={onRequestAddCondition}
-            className="text-[13px] text-neutral-600 hover:text-blue-600 focus:text-blue-600 active:text-blue-700 transition-colors"
+            className="text-[13px] text-neutral-600 transition-colors hover:text-blue-600 focus:text-blue-600 active:text-blue-700"
           >
             + Add condition
           </button>
 
-          {/* Inert for now */}
+          {/* Still clickable here (only disabled in AddConditionModal if you want) */}
           <button
             type="button"
-            className="text-[13px] text-neutral-600 hover:text-neutral-700 transition-colors"
+            className="text-[13px] text-neutral-600 transition-colors hover:text-blue-600 focus:text-blue-600 active:text-blue-700"
             title="Coming soon"
           >
             + Add condition group
           </button>
 
-          <span className="ml-1 text-neutral-400">{HelpIcon}</span>
+          <button
+            type="button"
+            title="Help"
+            aria-label="Help"
+            className="ml-1 rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+          >
+            <IconQuestion className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </div>,

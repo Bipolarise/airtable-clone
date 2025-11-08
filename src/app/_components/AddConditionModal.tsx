@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import FieldSelect from "~/app/_components/FieldSelect";
+import { IconQuestion } from "~/app/_icons/IconQuestion";
 import type { Condition, OperatorId, FieldOptionForModal } from "./ViewHeaderBar";
 
 /* Props now fully controlled */
@@ -27,14 +28,27 @@ export default function AddConditionModal({
 
   useEffect(() => setMounted(true), []);
 
-  // Position: shift left so right edge lines up with the Filter button
-  useLayoutEffect(() => {
+  // Position near the Filter button
+  useEffect(() => {
     if (!anchorEl) return;
-    const r = anchorEl.getBoundingClientRect();
-    setPos({ top: r.bottom + 12, left: Math.max(8, r.left - 220) });
+
+    const update = () => {
+      const r = anchorEl.getBoundingClientRect();
+      const panelW = panelRef.current?.offsetWidth ?? 560; // fallback to w-[560px]
+      const left = Math.max(8, r.right - panelW);         // align right edges
+      setPos({ top: r.bottom + 12, left });
+    };
+
+    update(); // run once immediately
+    window.addEventListener("resize", update, { passive: true });
+    window.addEventListener("scroll", update, { passive: true });
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update);
+    };
   }, [anchorEl]);
 
-  // Keep modal open while interacting with dropdown portals
+  // Outside click / ESC to close (keep open for dropdown portals)
   useEffect(() => {
     function onDown(e: MouseEvent) {
       if (!panelRef.current) return;
@@ -58,13 +72,12 @@ export default function AddConditionModal({
   const findField = (id: string | null) =>
     fieldOptions.find((f) => f.id === id) ?? null;
 
-  const defaultFieldId = fieldOptions[0]?.id ?? null; // first field (e.g., "Name")
+  const defaultFieldId = fieldOptions[0]?.id ?? null;
   const defaultOp = (fId: string | null): OperatorId =>
     (findField(fId)?.type ?? "TEXT") === "NUMBER" ? "gt" : "contains";
 
-  /** Append a new condition AFTER the last row and force field to the first option (e.g., Name). */
   const onAddConditionAppend = () => {
-    const seedFieldId = defaultFieldId; // <-- always reset to first field
+    const seedFieldId = defaultFieldId;
     const next: Condition = {
       id: rid(),
       join: "and",
@@ -94,7 +107,7 @@ export default function AddConditionModal({
       ref={panelRef}
       role="dialog"
       aria-label="Filter records"
-      className="fixed z-50 w-[680px] rounded-lg border border-neutral-200 bg-white shadow-xl"
+      className="fixed z-50 w-[560px] rounded-lg border border-neutral-200 bg-white shadow-xl"
       style={{ top: pos.top, left: pos.left }}
     >
       <div className="px-4 py-3">
@@ -116,25 +129,37 @@ export default function AddConditionModal({
           ))}
 
           <div className="mt-1 flex items-center gap-4 text-[13px]">
+            {/* Add condition — hover -> blue text */}
             <button
               type="button"
               onClick={onAddConditionAppend}
-              className="rounded px-1.5 py-1 text-neutral-700 hover:bg-neutral-100"
+              className="rounded px-1.5 py-1 text-neutral-600 transition-colors hover:text-blue-600 focus:text-blue-600 active:text-blue-700"
             >
-              <span className="mr-1 text-[16px] align-text-bottom">＋</span>
+              <span className="mr-1">+</span>
               Add condition
             </button>
 
+            {/* Add condition group — disabled */}
             <button
               type="button"
-              onClick={onAddConditionAppend /* stub groups for now */}
-              className="rounded px-1.5 py-1 text-neutral-700 hover:bg-neutral-100"
+              disabled
+              aria-disabled="true"
+              title="Coming soon"
+              className="rounded px-1.5 py-1 cursor-not-allowed select-none text-neutral-400"
             >
-              <span className="mr-1 text-[16px] align-text-bottom">＋</span>
+              <span className="mr-1">+</span>
               Add condition group
             </button>
 
-            <span className="ml-1 text-neutral-400">?</span>
+            {/* Help icon */}
+            <button
+              type="button"
+              className="ml-1 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+              title="Help"
+              aria-label="Help"
+            >
+              <IconQuestion className="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </div>
@@ -143,7 +168,7 @@ export default function AddConditionModal({
   );
 }
 
-/* ---------- rows & small inline choice ---------- */
+/* ---------- rows & compact segmented control ---------- */
 function ConditionRow({
   first,
   condition,
@@ -188,8 +213,7 @@ function ConditionRow({
   const needsValue = condition.op !== "empty" && condition.op !== "not_empty";
 
   return (
-    /* Split into 3 columns: label/where, control, actions */
-    <div className="grid grid-cols-[72px_1fr_auto] items-center gap-x-3">
+    <div className="grid grid-cols-[68px_1fr_auto] items-center gap-x-3">
       {/* LEFT: 'Where' or the AND/OR switcher */}
       <div className="text-[13px] text-neutral-700">
         {first ? (
@@ -202,47 +226,52 @@ function ConditionRow({
               { id: "or", label: "or" },
             ]}
             onChange={(j) => onChangeJoin(condition.id, j)}
-            minWidth={64}
+            minWidth={56}
           />
         )}
       </div>
 
-      {/* MIDDLE: the segmented control */}
+      {/* MIDDLE: compact segmented control */}
       <div className="flex w-full items-stretch overflow-hidden rounded-md border border-neutral-300">
-        <FieldSelect
-          value={condition.fieldId}
-          onChange={(v) => onChangeField(condition.id, v)}
-          options={fieldOptions.map(({ id, label }) => ({ id, label }))}
-          className="min-w-[150px] px-3 py-2 hover:bg-neutral-50"
-        />
+        {/* Field (Name) — FIXED, non-growing */}
+        <div className="basis-[108px] shrink-0 grow-0">
+          <FieldSelect
+            value={condition.fieldId}
+            onChange={(v) => onChangeField(condition.id, v)}
+            options={fieldOptions.map(({ id, label }) => ({ id, label }))}
+            className="w-full px-3 py-2 hover:bg-neutral-50"
+          />
+        </div>
 
         <div className="h-full w-px bg-neutral-200" />
 
+        {/* Operator — small, non-growing */}
         <InlineChoice<OperatorId>
           value={condition.op}
           options={ops}
           onChange={(op) => onChangeOp(condition.id, op)}
-          minWidth={148}
+          minWidth={112}
         />
 
         <div className="h-full w-px bg-neutral-200" />
 
+        {/* Value — compact */}
         {needsValue ? (
           <input
             placeholder="Enter a value"
-            className="w-[220px] shrink-0 truncate px-3 py-2 text-[13px] outline-none focus:bg-neutral-50"
+            className="w-[160px] shrink-0 truncate px-3 py-2 text-[13px] outline-none focus:bg-neutral-50"
             inputMode={field?.type === "NUMBER" ? "numeric" : "text"}
             type={field?.type === "NUMBER" ? "number" : "text"}
             value={condition.value}
             onChange={(e) => onChangeValue(condition.id, e.target.value)}
           />
         ) : (
-          <div className="w-[220px] shrink-0 px-3 py-2 text-[13px] text-neutral-400">—</div>
+          <div className="w-[160px] shrink-0 px-3 py-2 text-[13px] text-neutral-400">—</div>
         )}
       </div>
 
-      {/* RIGHT: actions */}
-      <div className="flex items-center gap-1">
+      {/* RIGHT: delete */}
+      <div className="flex items-center">
         <button
           type="button"
           className="rounded p-2 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-800"
@@ -265,7 +294,7 @@ function InlineChoice<T extends string>({
   value,
   options,
   onChange,
-  minWidth = 140,
+  minWidth = 112,
 }: {
   value: T;
   options: { id: T; label: string }[];
@@ -275,9 +304,11 @@ function InlineChoice<T extends string>({
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [mpos, setMpos] = useState<{ top: number; left: number; width: number }>(
-    { top: 0, left: 0, width: minWidth }
-  );
+  const [mpos, setMpos] = useState<{ top: number; left: number; width: number }>({
+    top: 0,
+    left: 0,
+    width: minWidth,
+  });
 
   useLayoutEffect(() => {
     if (!open || !btnRef.current) return;
@@ -324,7 +355,7 @@ function InlineChoice<T extends string>({
           <div
             ref={menuRef}
             data-modal-stay-open="true"
-            className="fixed z-50 max-h-[280px] w-[var(--w)] overflow-auto rounded-md border border-neutral-200 bg-white shadow-xl"
+            className="fixed z-50 max-h-[260px] w-[var(--w)] overflow-auto rounded-md border border-neutral-200 bg-white shadow-xl"
             style={{ top: mpos.top, left: mpos.left, ["--w" as any]: `${mpos.width}px` }}
             role="listbox"
           >

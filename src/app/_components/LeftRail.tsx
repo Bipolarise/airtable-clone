@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import MaskIcon from "~/app/_components/MaskIcon";
 import RailBtn from "~/app/_components/RailBtn";
+import { IconBell } from "~/app/_icons/IconBell";
+import { IconQuestion } from "~/app/_icons/IconQuestion";
+import { IconSignOut } from "~/app/_icons/IconSignOut";
 
 export default function LeftRail({
   baseName,
@@ -14,44 +18,65 @@ export default function LeftRail({
 }) {
   const router = useRouter();
   const [hover, setHover] = useState(false);
+  const { data: session } = useSession();
+
+  const avatarUrl = session?.user?.image ?? null;
+  const userInitial = (
+    session?.user?.name?.[0] ?? baseName?.[0] ?? "U"
+  ).toUpperCase();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const avatarBtnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!menuOpen) return;
+      const t = e.target as Node;
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(t) &&
+        avatarBtnRef.current &&
+        !avatarBtnRef.current.contains(t)
+      ) {
+        setMenuOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   return (
     <aside className="fixed left-0 top-0 z-30 flex h-screen w-14 flex-col items-center border-r border-neutral-200 bg-white">
-      {/* Top cluster (Airtable/back + Omni) */}
+      {/* Top cluster */}
       <div className="mt-2 flex flex-col items-center gap-2">
-        {/* Airtable icon / Back arrow w/ animation */}
         <button
-          className="relative flex h-8 w-8 items-center justify-center rounded transition mt-[3px]"
+          className="relative mt-[3px] flex h-8 w-8 items-center justify-center rounded transition"
           title={hover ? "Back to home" : "Airtable"}
-          onClick={() => {
-            router.push("/"); // change if your home route isn't "/"
-          }}
+          onClick={() => router.push("/")}
           onMouseEnter={() => setHover(true)}
           onMouseLeave={() => setHover(false)}
+          aria-label={hover ? "Back to home" : "Airtable"}
         >
-          {/* Airtable logo layer */}
           <div
             className={[
               "absolute inset-0 flex items-center justify-center transition-all duration-150",
-              hover
-                ? "opacity-0 scale-90 translate-x-1"
-                : "opacity-100 scale-100 translate-x-0",
+              hover ? "translate-x-1 scale-90 opacity-0" : "translate-x-0 scale-100 opacity-100",
             ].join(" ")}
           >
-            <img
-              src="/airtable.svg"
-              alt="Airtable"
-              className="h-5.5 w-5.5 opacity-90"
-            />
+            <img src="/airtable.svg" alt="Airtable" className="h-5.5 w-5.5 opacity-90" />
           </div>
-
-          {/* Arrow layer */}
           <div
             className={[
               "absolute inset-0 flex items-center justify-center transition-all duration-150",
-              hover
-                ? "opacity-100 translate-x-0 scale-100"
-                : "opacity-0 -translate-x-1 scale-90",
+              hover ? "translate-x-0 scale-100 opacity-100" : "-translate-x-1 scale-90 opacity-0",
             ].join(" ")}
           >
             <svg
@@ -61,6 +86,7 @@ export default function LeftRail({
               viewBox="0 0 16 16"
               fill="currentColor"
               className="text-black opacity-90 drop-shadow-[0_0_0.6px_rgba(0,0,0,0.9)]"
+              aria-hidden="true"
             >
               <path
                 fillRule="nonzero"
@@ -70,27 +96,80 @@ export default function LeftRail({
           </div>
         </button>
 
-        {/* Omni icon button */}
-        <div
-          className="flex h-8 w-8 items-center justify-center select-none"
-          title="Omni"
-        >
-          <img
-            src="/omni.png"
-            alt="Omni"
-            className="h-7 w-7 object-contain pointer-events-none"
-          />
+        <div className="flex h-8 w-8 select-none items-center justify-center" title="Omni">
+          <img src="/omni.png" alt="Omni" className="pointer-events-none h-7 w-7 object-contain" />
         </div>
       </div>
 
-      {/* User bubble bottom */}
-      <div className="mt-auto mb-3">
+      {/* Utility icons */}
+      <div className="mt-auto mb-2 flex flex-col items-center gap-2">
         <button
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-green-600 text-[12px] font-medium text-white"
-          title="Account"
+          className="flex h-8 w-8 items-center justify-center rounded text-neutral-700 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/40"
+          title="Help"
+          aria-label="Help"
         >
-          {(baseName?.[0] ?? "U").toUpperCase()}
+          <IconQuestion className="h-[18px] w-[18px]" />
         </button>
+        <button
+          className="flex h-8 w-8 items-center justify-center rounded text-neutral-700 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/40"
+          title="Notifications"
+          aria-label="Notifications"
+        >
+          <IconBell className="h-[18px] w-[18px]" />
+        </button>
+      </div>
+
+      {/* User bubble + popover */}
+      <div className="relative mb-3">
+        <button
+          ref={avatarBtnRef}
+          onClick={() => setMenuOpen((v) => !v)}
+          className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/10 shadow-sm"
+          title={session?.user?.name ?? "Account"}
+          aria-label="Account"
+        >
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={session?.user?.name ?? "Account"}
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center bg-green-600 text-[12px] font-medium text-white">
+              {userInitial}
+            </span>
+          )}
+        </button>
+
+        {menuOpen && (
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label="Account menu"
+            className="absolute left-10 bottom-1 w-64 select-none overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-[0_12px_36px_rgba(0,0,0,0.14)]"
+          >
+            <div className="p-3">
+              <div className="text-xs font-medium text-slate-900">
+                {session?.user?.name ?? "Signed in"}
+              </div>
+              {session?.user?.email && (
+                <div className="mt-0.5 text-xs text-slate-500">{session.user.email}</div>
+              )}
+            </div>
+
+            <div className="mx-3 h-px bg-neutral-200" />
+
+            <button
+              role="menuitem"
+              onClick={() => signOut({ callbackUrl: "/" })}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+            >
+              <IconSignOut className="h-4 w-4 shrink-0" />
+              <span>Log out</span>
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

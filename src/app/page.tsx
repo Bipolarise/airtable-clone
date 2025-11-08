@@ -2,6 +2,7 @@
 import { auth } from "~/server/auth";
 import { api, HydrateClient } from "~/trpc/server";
 import HomeShell from "./_components/home-shell";
+import SignInCard from "./_components/SignInCard";
 
 export default async function Home() {
   const session = await auth();
@@ -13,7 +14,7 @@ export default async function Home() {
 
   return (
     <HydrateClient>
-      <HomeShell />
+      {session?.user ? <HomeShell /> : <SignInCard />}
     </HydrateClient>
   );
 }

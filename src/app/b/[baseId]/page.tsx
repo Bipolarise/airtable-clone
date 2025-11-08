@@ -351,7 +351,7 @@ export default function BasePage() {
     [unifiedCols, hiddenSet, setHidden]
   );
 
-  // --- Stable "seed" for ViewHeaderBar: updates only when actual hidden values change
+  // --- Stable "seed" for ViewHeaderBar
   const hiddenSignature = useMemo(() => {
     const ids = unifiedCols.map((c) => c.id);
     return ids.map((id) => (hiddenSet.has(id) ? "1" : "0") + ":" + id).join("|");
@@ -372,12 +372,24 @@ export default function BasePage() {
     [viewCols]
   );
 
-  // rows (infinite w/ cursor)
+  // ---- stabilize query params so we don't churn keys unnecessarily
+  const conditionsForQuery = useMemo(
+    () => filterConditions,
+    // only change ref when contents actually change
+    [JSON.stringify(filterConditions)]
+  );
+
+  // ---- rows (infinite w/ cursor) ----
   const rowsQ = api.row.list.useInfiniteQuery(
-    { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions },
+    {
+      tableId,
+      limit: 200,
+      search: debouncedSearch,
+      conditions: conditionsForQuery,
+    },
     {
       enabled: !!tableId,
-      getNextPageParam: (d) => d?.nextCursor ?? undefined,
+      getNextPageParam: (last) => (last as any)?.nextCursor ?? undefined,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       refetchInterval: false,
@@ -512,7 +524,7 @@ export default function BasePage() {
 
   const updateCell = api.row.updateCell.useMutation({
     onMutate: async (vars) => {
-      const q = { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions } as const;
+      const q = { tableId, limit: 200, search: debouncedSearch, conditions: conditionsForQuery } as const;
 
       await utils.row.list.cancel(q);
       const prev = utils.row.list.getInfiniteData(q);
@@ -597,7 +609,7 @@ export default function BasePage() {
 
   const addRowMut = api.row.create.useMutation({
     onMutate: async (vars) => {
-      const q = { tableId, limit: 200, search: debouncedSearch, conditions: filterConditions } as const;
+      const q = { tableId, limit: 200, search: debouncedSearch, conditions: conditionsForQuery } as const;
 
       await utils.row.list.cancel(q);
       const prev = utils.row.list.getInfiniteData(q);
@@ -614,7 +626,7 @@ export default function BasePage() {
 
         if (!old || old.pages.length === 0) {
           return {
-            pageParams: [],
+            pageParams: [null],
             pages: [{ rows: [optimisticRow], nextCursor: undefined, total: 1 }],
           } as any;
         }
@@ -800,7 +812,7 @@ export default function BasePage() {
                   <svg className="h-4 w-4 text-neutral-700" viewBox="0 0 16 16" fill="currentColor">
                     <path
                       fillRule="nonzero"
-                      d="M4.24999 3C4.43937 3 4.6125 3.107 4.6972 3.27639L6.4472 6.77639C6.5707 7.02338 6.47058 7.32372 6.22359 7.44721C5.9766 7.57071 5.67627 7.4706 5.55277 7.22361L5.17327 6.4646H3.3267L2.9472 7.22361C2.82371 7.4706 2.52337 7.57071 2.27638 7.44721C2.02939 7.32372 1.92928 7.02338 2.05277 6.77639L3.80277 3.27639C3.88747 3.107 4.0606 3 4.24999 3ZM3.8267 5.4646H4.67327L4.24999 4.61803L3.8267 5.4646Z M7.5 3.75C7.22386 3.75 7 3.97386 7 4.25C7 4.52614 7.22386 4.75 7.5 4.75H13.5C13.7761 4.75 14 4.52614 14 4.25C14 3.97386 13.7761 3.75 13.5 3.75H7.5Z M8 6.75C8 6.47386 8.22386 6.25 8.5 6.25H11.5C11.7761 6.25 12 6.47386 12 6.75C12 7.02614 11.7761 7.25 11.5 7.25H8.5C8.22386 7.25 8 7.02614 8 6.75Z M2 9.25C2 8.97386 2.22386 8.75 2.5 8.75H13.5C13.7761 8.75 14 8.97386 14 9.25C14 9.52614 13.7761 10.25 13.5 10.25H2.5C2.22386 10.25 2 9.97386 2 9.25Z M2 11.75C2 11.4739 2.22386 11.25 2.5 11.25H11.5C11.7761 11.25 12 11.4739 12 11.75C12 12.0261 11.7761 12.25 11.5 12.25H2.5C2.22386 12.25 2 12.0261 2 11.75Z"
+                      d="M4.24999 3C4.43937 3 4.6125 3.107 4.6972 3.27639L6.4472 6.77639C6.5707 7.02338 6.47058 7.32372 6.22359 7.44721C5.9766 7.57071 5.67627 7.4706 5.55277 7.22361L5.17327 6.4646H3.3267L2.9472 7.22361C2.82371 7.4706 2.52337 7.57071 2.27638 7.44721C2.02939 7.32372 1.92928 7.02338 2.05277 6.77639L3.80277 3.27639C3.88747 3.107 4.0606 3 4.24999 3ZM3.8267 5.4646H4.67327L4.24999 4.61803L3.8267 5.4646Z M7.5 3.75C7.22386 3.75 7 3.97386 7 4.25C7 4.52614 7.22386 4.75 7.5 4.75H13.5C13.7761 4.75 14 4.52614 14 4.25C14 3.97386 13.7761 3.75 13.5 3.75H7.5Z M8 6.75C8 6.47386 8.22386 6.25 8.5 6.25H11.5C11.7761 6.25 12 6.47386 12 6.75C12 7.02614 11.7761 7.25 11.5 7.25H8.5C8.22386 7.25 8 7.02614 8 6.75Z M2 9.25C2 8.97386 2.22386 8.75 2.5 8.75H13.5C13.7761 8.75 14 9.97386 14 9.25C14 9.52614 13.7761 10.25 13.5 10.25H2.5C2.22386 10.25 2 9.97386 2 9.25Z M2 11.75C2 11.4739 2.22386 11.25 2.5 11.25H11.5C11.7761 11.25 12 11.4739 12 11.75C12 12.0261 11.7761 12.25 11.5 12.25H2.5C2.22386 12.25 2 12.0261 2 11.75Z"
                     />
                   </svg>
                 );
@@ -1039,52 +1051,18 @@ export default function BasePage() {
   const onPrev = useCallback(() => goto(hitIndex - 1), [goto, hitIndex]);
   const onNext = useCallback(() => goto(hitIndex + 1), [goto, hitIndex]);
 
-  /* ---------------- scroll container + sentinel ---------------- */
+  /* ---------------- scroll container ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-
-  // IntersectionObserver-based prefetch (kick off next page before we see the end)
-  useEffect(() => {
-    const rootEl = gridScrollRef.current;
-    const target = loadMoreRef.current;
-    if (!rootEl || !target) return;
-
-    let pending = false;
-
-    const onIntersect: IntersectionObserverCallback = async (entries) => {
-      // Pick any intersecting entry (there can be more than one)
-      const first = entries.find((e) => e.isIntersecting);
-      if (!first) return;
-
-      if (!rowsQ.hasNextPage || rowsQ.isFetchingNextPage) return;
-      if (pending) return;
-      pending = true;
-      try {
-        await rowsQ.fetchNextPage();
-      } finally {
-        pending = false;
-      }
-    };
-
-    const io = new IntersectionObserver(onIntersect, {
-      root: rootEl,
-      rootMargin: "800px 0px",
-      threshold: 0,
-    });
-
-    io.observe(target);
-    return () => io.disconnect();
-  }, [rowsQ.hasNextPage, rowsQ.isFetchingNextPage, rowsQ.fetchNextPage]);
 
   /* ---------------- proactive fill-ahead (buffered prefetch) ---------------- */
-  // Tunables
+  // Tunables — keep PAGE_SIZE in sync with your API page size (200 here)
   const PAGE_SIZE = 200;
-  const ROW_H = 36; // px, approximate row height
-  const ROW_PREFETCH_THRESHOLD_ROWS = 100; // when fewer than this remain below viewport, prefetch
-  const MIN_PAGE_BUFFER = 4; // always try to keep at least this many pages loaded
-  const PREFETCH_ROWS_BUDGET = 20_000; // soft cap; increase or set to Infinity
+  const ROW_H = 36; // approximate row height in px
+  const ROW_PREFETCH_THRESHOLD_ROWS = 60;  // fetch when fewer than 60 rows remain below viewport
+  const MIN_PAGE_BUFFER = 3;               // always keep at least 3 pages loaded
+  const PREFETCH_ROWS_BUDGET = 20_000;     // safety cap per param set
   const MAX_PREFETCH_PAGES_PER_PARAM = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
-  const SPECULATIVE_BURST_PAGES = 2;
+  const SPECULATIVE_BURST_PAGES = 2;       // grab a bit extra opportunistically
 
   useEffect(() => {
     const el = gridScrollRef.current;
@@ -1107,7 +1085,6 @@ export default function BasePage() {
       if (!canFetch()) return false;
       await rowsQ.fetchNextPage();
       fetchedForThisParam++;
-      // let scrollHeight update before next decision
       await new Promise(requestAnimationFrame);
       return true;
     };
@@ -1123,21 +1100,21 @@ export default function BasePage() {
       if (filling) return;
       filling = true;
       try {
-        // 1) If too few rows remain below, fetch until we have a cushion
+        // Top-up if we're nearing the end of what we have
         while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
           const ok = await doFetch();
           if (!ok) break;
         }
 
-        // 2) Keep a minimum page buffer regardless of scroll position
+        // Maintain minimum page buffer (smooth for fast wheels/trackpads)
         let pagesLoaded = rowsQ.data?.pages?.length ?? 0;
-        while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER + 1) {
+        while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER) {
           const ok = await doFetch();
           if (!ok) break;
-          pagesLoaded++; // reflect the newly fetched page
+          pagesLoaded++;
         }
 
-        // 3) When very close or on mount/param change, speculatively grab a couple more
+        // Small speculative burst at mount/when running low
         if (aggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
           await burstFetch(SPECULATIVE_BURST_PAGES);
         }
@@ -1146,7 +1123,11 @@ export default function BasePage() {
       }
     };
 
-    // Respond to scroll/wheel quickly
+    // On mount/param change: aggressively prefill
+    fetchedForThisParam = 0;
+    void fillAhead(true);
+
+    // Throttled listener for scroll/wheel/resize
     let ticking = false;
     const onScrollish = () => {
       if (!canFetch()) return;
@@ -1160,12 +1141,9 @@ export default function BasePage() {
       });
     };
 
-    // Reset per search/filter/table combo, then aggressively fill at start
-    fetchedForThisParam = 0;
-    void fillAhead(true);
-
     el.addEventListener("scroll", onScrollish, { passive: true });
     el.addEventListener("wheel", onScrollish, { passive: true });
+
     const ro = new ResizeObserver(() => void fillAhead(false));
     ro.observe(el);
 
@@ -1180,7 +1158,7 @@ export default function BasePage() {
     rowsQ.isFetchingNextPage,
     rowsQ.data?.pages?.length,
     debouncedSearch,
-    filterConditions,
+    conditionsForQuery,
   ]);
 
   /* ---------------- measure header height for the ViewsPanel offset ---------------- */
@@ -1217,7 +1195,7 @@ export default function BasePage() {
     return () => ro.disconnect();
   }, []);
 
-  // --- Grid remount key: re-create DataGrid when visible/hidden set for current view changes
+  // --- Grid remount key
   const gridKey = useMemo(
     () => viewCols.map((c) => `${c.id}:${c.hidden ? 1 : 0}`).join("|"),
     [viewCols]
@@ -1225,7 +1203,7 @@ export default function BasePage() {
 
   /* ---------------- loading / error states ---------------- */
   if (baseLoading || tablesQ.isLoading) {
-    return <div className="p-6 text-sm" />; // top-level base/tables loading
+    return <div className="p-6 text-sm" />;
   }
   if (baseErr) return <div className="p-6 text-red-600">Error: {baseErr.message}</div>;
 
@@ -1236,8 +1214,11 @@ export default function BasePage() {
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
   if (!base) return <div className="p-6">Not found.</div>;
 
-  // GRID readiness: empty while loading (no skeleton, just hidden grid until data is ready)
-  const gridLoading = colsLoading || rowsQ.isLoading || !colsFromServer || !rowsQ.data;
+  // GRID readiness — don’t blank UI if we still have data while refetching
+  const gridLoading =
+    colsLoading ||
+    !colsFromServer ||
+    (!rowsQ.data && rowsQ.isLoading);
 
   /* ---------------- UI ---------------- */
   return (
@@ -1266,7 +1247,7 @@ export default function BasePage() {
 
         <div ref={viewbarWrapRef}>
           <ViewHeaderBar
-            key={activeViewId ?? "no-view"} // remount per view to avoid stale local state
+            key={activeViewId ?? "no-view"}
             onAddDemoRows={() => {
               if (!tableId || bulkAdd.isPending) return;
               bulkAdd.mutate({ tableId, count: 100000 });
@@ -1306,13 +1287,12 @@ export default function BasePage() {
                 onAddRow={() => addRowMut.mutate({ tableId, data: makeEmptyRow() })}
                 onAddTextColumn={handleAddTextColumn}
                 onAddNumberColumn={handleAddNumberColumn}
-                showLoadingMore={false} // no "loading more…" UI
+                showLoadingMore={false}
               />
             )}
 
-            {/* Sentinel to trigger loading the next page */}
-            <div ref={loadMoreRef} style={{ height: 1 }} />
-            {/* when gridLoading === true, this area stays intentionally empty */}
+            {/* kept for layout parity; no observer attached */}
+            <div style={{ height: 1 }} />
           </div>
 
           <div className="flex items-center gap-2 border-t border-neutral-200 px-4 py-2 text-[12px] text-neutral-500">

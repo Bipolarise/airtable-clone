@@ -50,14 +50,10 @@ type ViewHeaderBarProps = {
   conditions: Condition[];
   onChangeConditions: (next: Condition[]) => void;
 
-  /** Optional: lift column visibility to parent */
   onChangeHiddenMap?: (hiddenById: Record<string, boolean>) => void;
   seedHiddenMap?: Record<string, boolean>;
 
-  /** Toggle the left-side ViewsPanel */
   onToggleViews?: () => void;
-
-  /** Label for the current view (e.g., "Grid view 2") */
   activeViewName?: string;
 };
 
@@ -65,6 +61,15 @@ type ViewHeaderBarProps = {
 const FILTER_ACTIVE_BG = "#DEF7D9";
 const FILTER_ACTIVE_RING_BASE = "#DEF7D9";
 const FILTER_ACTIVE_RING_HOVER = "#6B9E6F";
+
+/* Hidden-fields chip colors (light blue pill + darker blue ring on hover) */
+const HIDDEN_ACTIVE_BG = "#DEF0FF";
+const HIDDEN_ACTIVE_RING_BASE = "#CFE6FF";
+const HIDDEN_ACTIVE_RING_HOVER = "#6B90C6";
+
+/* Make all header buttons the same size/hover area */
+const BTN = "flex items-center gap-2 rounded px-2 h-7 hover:bg-neutral-100";
+const BTN_ICON = "flex items-center rounded px-2 h-7 hover:bg-neutral-100";
 
 /* ---- Exclusions ---- */
 const EXCLUDED_LABELS = new Set(["name"]);
@@ -163,7 +168,6 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
 
     setHiddenById((prev) => (shallowEqualMap(prev, corrected) ? prev : corrected));
     lastSentRef.current = corrected;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedHiddenMap, fieldOptions]);
 
   const commitHiddenMap = (next: Record<string, boolean>) => {
@@ -283,11 +287,10 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   return (
     <div className="border-b border-neutral-200 bg-white">
       <div className="flex h-12 items-center justify-between px-4 text-[13px] text-neutral-700">
-        {/* LEFT: Views icon + current view */}
+        {/* LEFT */}
         <div className="flex items-center gap-2">
           <button
-            className="flex items-center rounded px-1.5 py-1 hover:bg-neutral-100"
-            // Block the document-level outside-click handler from seeing this event
+            className={BTN_ICON}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -299,7 +302,7 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
             <IconList className="h-[18px] w-[18px] text-neutral-700" />
           </button>
 
-          <button className="flex items-center gap-2 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN}>
             <IconGridFeature className="h-4 w-4 text-[#166ee1]" />
             <span className="font-medium text-neutral-800">
               {activeViewName ?? "Grid view"}
@@ -323,7 +326,7 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
           <button
             onClick={onAddDemoRows}
             disabled={isAddingDemoRows}
-            className="flex items-center gap-1 rounded px-1.5 transition-colors hover:bg-neutral-100 active:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
+            className={`${BTN} transition-colors active:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50`}
             title="Insert demo rows"
           >
             <span className="whitespace-nowrap">
@@ -383,33 +386,33 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
             />
           )}
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN}>
             <IconGroup className="h-[14px] w-[14px] text-neutral-600" />
             <span>Group</span>
           </button>
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN}>
             <IconArrowsDownUp className="h-[14px] w-[14px] text-neutral-600" />
             <span>Sort</span>
           </button>
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN}>
             <IconPaintBucket className="h-[14px] w-[14px] text-neutral-600" />
             <span>Color</span>
           </button>
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN_ICON}>
             <IconRowHeightSmall className="h-[14px] w-[14px] text-neutral-600" />
           </button>
 
-          <button className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100">
+          <button className={BTN}>
             <IconArrowSquareOut className="h-[14px] w-[14px] text-neutral-600" />
             <span>Share and sync</span>
           </button>
 
           <button
             onClick={onOpenSearchModal}
-            className="flex items-center rounded px-1.5 hover:bg-neutral-100"
+            className={BTN_ICON}
             aria-label="Open search"
             title={search ? `Search: ${search}` : "Search"}
           >
@@ -445,17 +448,42 @@ function HideFieldsButton({
 }) {
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
+
+  const hiddenCount = hideFields.reduce((n, f) => n + (f.hidden ? 1 : 0), 0);
+  const hasHidden = hiddenCount > 0;
+  const label = hasHidden
+    ? `${hiddenCount} hidden field${hiddenCount === 1 ? "" : "s"}`
+    : "Hide fields";
+
+  /* Hover ring for the blue pill */
+  const [hovering, setHovering] = useState(false);
+
   return (
     <>
       <button
         ref={btnRef}
-        className="flex items-center gap-1 rounded px-1.5 hover:bg-neutral-100"
         onClick={() => setOpen((o) => !o)}
-        title="Hide/show fields"
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+        title={hasHidden ? label : "Hide/show fields"}
+        className={`${BTN} ${hasHidden ? "text-neutral-800" : ""}`}
+        style={
+          hasHidden
+            ? {
+                backgroundColor: HIDDEN_ACTIVE_BG,
+                boxShadow: `0 0 0 ${hovering ? 2 : 1}px ${
+                  hovering ? HIDDEN_ACTIVE_RING_HOVER : HIDDEN_ACTIVE_RING_BASE
+                } inset`,
+              }
+            : undefined
+        }
       >
-        <IconEyeSlash className="h-[14px] w-[14px] text-neutral-600" />
-        <span>Hide fields</span>
+        <IconEyeSlash
+          className={`h-[14px] w-[14px] ${hasHidden ? "text-neutral-700" : "text-neutral-600"}`}
+        />
+        <span>{label}</span>
       </button>
+
       {open && (
         <HideFieldsModal
           anchorEl={btnRef.current}
