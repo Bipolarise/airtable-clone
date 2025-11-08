@@ -1054,16 +1054,29 @@ export default function BasePage() {
   /* ---------------- scroll container ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
 
-  /* ---------------- proactive fill-ahead (buffered prefetch) ---------------- */
-  // Tunables — keep PAGE_SIZE in sync with your API page size (200 here)
-  const PAGE_SIZE = 200;
-  const ROW_H = 36; // approximate row height in px
-  const ROW_PREFETCH_THRESHOLD_ROWS = 60;  // fetch when fewer than 60 rows remain below viewport
-  const MIN_PAGE_BUFFER = 3;               // always keep at least 3 pages loaded
-  const PREFETCH_ROWS_BUDGET = 20_000;     // safety cap per param set
-  const MAX_PREFETCH_PAGES_PER_PARAM = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
-  const SPECULATIVE_BURST_PAGES = 2;       // grab a bit extra opportunistically
+  /* ---------------- row height measurement (real, not guessed) ---------------- */
+  const measuredRowHRef = useRef<number>(36);
 
+  const updateMeasuredRowHeight = useCallback(() => {
+    const root = gridScrollRef.current;
+    if (!root) return;
+
+    const anyRowEl =
+      root.querySelector('[data-grid-row="true"]') ||
+      root.querySelector(".dg-row") ||
+      root.querySelector('[role="row"]');
+
+    const h = anyRowEl instanceof HTMLElement ? anyRowEl.offsetHeight : 0;
+    if (h > 0 && Math.abs(h - measuredRowHRef.current) > 0.5) {
+      measuredRowHRef.current = h;
+    }
+  }, []);
+
+  useEffect(() => {
+    updateMeasuredRowHeight();
+  }, [rowsQ.data?.pages?.length, updateMeasuredRowHeight]);
+
+  /* ---------------- proactive fill-ahead (pixel + velocity based) ---------------- */
   useEffect(() => {
     const el = gridScrollRef.current;
     if (!el) return;
@@ -1071,15 +1084,24 @@ export default function BasePage() {
     let filling = false;
     let fetchedForThisParam = 0;
 
-    const rowsLoaded = () => filteredRows.length;
-    const rowsVisible = () => Math.ceil(el.clientHeight / ROW_H);
-    const topIndex = () => Math.floor(el.scrollTop / ROW_H);
-    const remainingBelow = () => rowsLoaded() - (topIndex() + rowsVisible());
+    // Keep these in sync with your API
+    const PAGE_SIZE = 200;
+    const MIN_PAGE_BUFFER = 3;
+    const PREFETCH_ROWS_BUDGET = 20_000;
+    const MAX_PAGES = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
+
+    const baseThresholdPx = Math.max(1200, el.clientHeight * 2.5);
+    const HIGH_VELOCITY_BOOST = 1600;
+
+    // Velocity tracking (px per 100ms)
+    let lastTop = el.scrollTop;
+    let lastT = performance.now();
+    let velocityPxPer100 = 0;
 
     const canFetch = () =>
       rowsQ.hasNextPage &&
       !rowsQ.isFetchingNextPage &&
-      fetchedForThisParam < MAX_PREFETCH_PAGES_PER_PARAM;
+      fetchedForThisParam < MAX_PAGES;
 
     const doFetch = async () => {
       if (!canFetch()) return false;
@@ -1096,17 +1118,21 @@ export default function BasePage() {
       }
     };
 
+    const remainingPxBelow = () =>
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+
     const fillAhead = async (aggressive = false) => {
       if (filling) return;
       filling = true;
       try {
-        // Top-up if we're nearing the end of what we have
-        while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
+        const velBoost = velocityPxPer100 > 800 ? HIGH_VELOCITY_BOOST : 0;
+        const thresholdPx = baseThresholdPx + velBoost;
+
+        while (canFetch() && remainingPxBelow() < thresholdPx) {
           const ok = await doFetch();
           if (!ok) break;
         }
 
-        // Maintain minimum page buffer (smooth for fast wheels/trackpads)
         let pagesLoaded = rowsQ.data?.pages?.length ?? 0;
         while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER) {
           const ok = await doFetch();
@@ -1114,28 +1140,37 @@ export default function BasePage() {
           pagesLoaded++;
         }
 
-        // Small speculative burst at mount/when running low
-        if (aggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
-          await burstFetch(SPECULATIVE_BURST_PAGES);
+        if (aggressive || remainingPxBelow() < thresholdPx / 2) {
+          const extra = velocityPxPer100 > 800 ? 3 : 1;
+          await burstFetch(extra);
         }
+
+        updateMeasuredRowHeight();
       } finally {
         filling = false;
       }
     };
 
-    // On mount/param change: aggressively prefill
+    // Initial aggressive fill on param change
     fetchedForThisParam = 0;
     void fillAhead(true);
 
-    // Throttled listener for scroll/wheel/resize
+    // Velocity-aware scroll handler
     let ticking = false;
     const onScrollish = () => {
+      const now = performance.now();
+      const dt = Math.max(16, now - lastT);
+      const dy = Math.abs(el.scrollTop - lastTop);
+      velocityPxPer100 = (dy / dt) * 100;
+      lastT = now;
+      lastTop = el.scrollTop;
+
       if (!canFetch()) return;
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
         ticking = false;
-        if (remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
+        if (remainingPxBelow() < baseThresholdPx) {
           void fillAhead(false);
         }
       });
@@ -1144,13 +1179,33 @@ export default function BasePage() {
     el.addEventListener("scroll", onScrollish, { passive: true });
     el.addEventListener("wheel", onScrollish, { passive: true });
 
+    // Resize: top up if viewport grows
     const ro = new ResizeObserver(() => void fillAhead(false));
     ro.observe(el);
+
+    // Sentinel backstop so the user never hits literal bottom
+    const sentinel = document.createElement("div");
+    sentinel.setAttribute("aria-hidden", "true");
+    sentinel.style.height = "1px";
+    sentinel.style.width = "1px";
+    el.appendChild(sentinel);
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) void fillAhead(false);
+        }
+      },
+      { root: el, rootMargin: "800px 0px 0px 0px", threshold: 0 }
+    );
+    io.observe(sentinel);
 
     return () => {
       el.removeEventListener("scroll", onScrollish);
       el.removeEventListener("wheel", onScrollish);
       ro.disconnect();
+      io.disconnect();
+      sentinel.remove();
     };
   }, [
     filteredRows.length,
@@ -1159,6 +1214,7 @@ export default function BasePage() {
     rowsQ.data?.pages?.length,
     debouncedSearch,
     conditionsForQuery,
+    updateMeasuredRowHeight,
   ]);
 
   /* ---------------- measure header height for the ViewsPanel offset ---------------- */
@@ -1291,7 +1347,16 @@ export default function BasePage() {
               />
             )}
 
-            {/* kept for layout parity; no observer attached */}
+            {/* Phantom spacer to keep scrollbar from bottoming out while next page loads */}
+            {!gridLoading && (
+              <div
+                style={{
+                  height: Math.max(0, (totalRecords - allRows.length)) * (measuredRowHRef.current || 36),
+                }}
+              />
+            )}
+
+            {/* kept for layout parity */}
             <div style={{ height: 1 }} />
           </div>
 
