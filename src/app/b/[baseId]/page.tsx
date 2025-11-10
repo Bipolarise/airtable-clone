@@ -1037,19 +1037,14 @@ export default function BasePage() {
                   initial={v}
                   isNumber={c.type === "NUMBER"}
                   onCommit={(finalVal) => {
-                    scheduleCommit(
-                      row.original.id,
-                      c.id,
-                      c.type as "TEXT" | "NUMBER",
-                      finalVal
-                    );
+                    scheduleCommit(row.original.id, c.id, c.type as "TEXT" | "NUMBER", finalVal);
                   }}
                   onMove={move}
                   inputRefCb={setCellRef(row.original.id, c.id)}
                   allowTabOut={atLastCell}
                   allowShiftTabOut={atFirstCell}
                   shouldAutoFocus={focusedCellKeyRef.current === `${row.original.id}:${c.id}`}
-                  identityKey={`${row.original.id}:${c.id}`}
+                  identityKey={`${row.original.id}:${c.id}`}   // ← NEW
                 />
               </div>
             </div>
