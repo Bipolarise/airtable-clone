@@ -487,6 +487,32 @@ export default function BasePage() {
   const [suppressFocusKey, setSuppressFocusKey] = useState<string | null>(null);
   const suppressSelectNextFocusRef = useRef(false);
 
+  /* mirror volatile state in refs so columnDefs stays stable */
+  const focusedCellKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    focusedCellKeyRef.current = focusedCellKey;
+  }, [focusedCellKey]);
+
+  const suppressFocusKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    suppressFocusKeyRef.current = suppressFocusKey;
+  }, [suppressFocusKey]);
+
+  const showModalRef = useRef(false);
+  useEffect(() => {
+    showModalRef.current = showModal;
+  }, [showModal]);
+
+  const normSearchRef = useRef("");
+  useEffect(() => {
+    normSearchRef.current = normSearch;
+  }, [normSearch]);
+
+  const highlightedColsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    highlightedColsRef.current = highlightedCols;
+  }, [highlightedCols]);
+
   /* ---------------- grid helpers ---------------- */
   const editableColIds = useMemo(
     () => viewCols.filter((c) => !c.hidden).map((c) => c.id),
@@ -703,6 +729,25 @@ export default function BasePage() {
 
         return { ...old, pages };
       });
+
+      // Preserve focus if we were focused in the temp row
+      const tempPrefix = `${ctx.tempId}:`;
+      if (focusedCellKeyRef.current?.startsWith(tempPrefix)) {
+        const nextKey = focusedCellKeyRef.current.replace(ctx.tempId, realRow.id);
+        setFocusedCellKey(nextKey);
+      }
+      if (suppressFocusKeyRef.current?.startsWith(tempPrefix)) {
+        const nextKey = suppressFocusKeyRef.current.replace(ctx.tempId, realRow.id);
+        setSuppressFocusKey(nextKey);
+      }
+      // Move element refs from temp to real id
+      for (const k of Object.keys(cellRefs.current)) {
+        if (k.startsWith(tempPrefix)) {
+          const newK = k.replace(ctx.tempId, realRow.id);
+          cellRefs.current[newK] = cellRefs.current[k]!;
+          delete cellRefs.current[k];
+        }
+      }
     },
   });
 
@@ -753,6 +798,27 @@ export default function BasePage() {
             : c
         );
       });
+
+      // Preserve focus if focused on temp column id
+      if (ctx?.tempId) {
+        const tempSuffix = `:${ctx.tempId}`;
+        if (focusedCellKeyRef.current?.endsWith(tempSuffix)) {
+          const nextKey = focusedCellKeyRef.current.replace(ctx.tempId, real.id);
+          setFocusedCellKey(nextKey);
+        }
+        if (suppressFocusKeyRef.current?.endsWith(tempSuffix)) {
+          const nextKey = suppressFocusKeyRef.current.replace(ctx.tempId, real.id);
+          setSuppressFocusKey(nextKey);
+        }
+        // Move element refs from temp column id to real column id
+        for (const k of Object.keys(cellRefs.current)) {
+          if (k.endsWith(tempSuffix)) {
+            const newK = k.replace(ctx.tempId, real.id);
+            cellRefs.current[newK] = cellRefs.current[k]!;
+            delete cellRefs.current[k];
+          }
+        }
+      }
     },
     onSettled: () => {
       void utils.table.meta.invalidate({ tableId });
@@ -832,11 +898,10 @@ export default function BasePage() {
     for (const c of viewCols) {
       if (c.hidden) continue;
 
-      const colIsFiltered = highlightedCols.has(c.id);
-
       defs.push({
         id: c.id,
         header: () => {
+          const colIsFiltered = highlightedColsRef.current.has(c.id);
           const headerIcon = (() => {
             switch (c.name) {
               case "Name":
@@ -886,12 +951,15 @@ export default function BasePage() {
         cell: ({ row, getValue, column, table }) => {
           const v = getValue() as string | number | "";
 
+          const show = showModalRef.current;
+          const norm = normSearchRef.current;
+
           const isMatch =
-            showModal &&
+            show &&
             c.type === "TEXT" &&
             typeof v === "string" &&
-            normSearch.length > 0 &&
-            v.toLowerCase().includes(normSearch);
+            norm.length > 0 &&
+            v.toLowerCase().includes(norm);
 
           const curRowIndex = row.index;
           const curColIndex = colIndexMap.get(column.id) ?? 0;
@@ -940,14 +1008,14 @@ export default function BasePage() {
 
           const isAttachmentPlaceholder = c.name === "Attachment...";
           const cellKey = `${row.original.id}:${c.id}`;
-          const isActiveHit = !!normSearch && focusedCellKey === cellKey;
-          const suppressChrome = suppressFocusKey === cellKey;
+          const isActiveHit = !!norm && focusedCellKeyRef.current === cellKey;
+          const suppressChrome = suppressFocusKeyRef.current === cellKey;
 
           return (
             <div
               className="relative h-9"
               tabIndex={-1}
-              style={colIsFiltered ? { backgroundColor: "#DEF7D9" } : undefined}
+              style={highlightedColsRef.current.has(c.id) ? { backgroundColor: "#DEF7D9" } : undefined}
             >
               {isMatch && (
                 <div
@@ -966,17 +1034,22 @@ export default function BasePage() {
 
               <div className={"relative z-10 " + (suppressChrome ? "no-focus-chrome" : "")}>
                 <CellEditor
-                  key={`${row.original.id}:${c.id}`}
                   initial={v}
                   isNumber={c.type === "NUMBER"}
                   onCommit={(finalVal) => {
-                    scheduleCommit(row.original.id, c.id, c.type as "TEXT" | "NUMBER", finalVal);
+                    scheduleCommit(
+                      row.original.id,
+                      c.id,
+                      c.type as "TEXT" | "NUMBER",
+                      finalVal
+                    );
                   }}
                   onMove={move}
                   inputRefCb={setCellRef(row.original.id, c.id)}
                   allowTabOut={atLastCell}
                   allowShiftTabOut={atFirstCell}
-                  shouldAutoFocus={focusedCellKey === `${row.original.id}:${c.id}`}
+                  shouldAutoFocus={focusedCellKeyRef.current === `${row.original.id}:${c.id}`}
+                  identityKey={`${row.original.id}:${c.id}`}
                 />
               </div>
             </div>
@@ -989,19 +1062,8 @@ export default function BasePage() {
     }
 
     return defs;
-  }, [
-    viewCols,
-    colIndexMap,
-    editableColIds,
-    setCellRef,
-    focusCell,
-    scheduleCommit,
-    focusedCellKey,
-    normSearch,
-    suppressFocusKey,
-    highlightedCols,
-    showModal,
-  ]);
+    // only stable deps here:
+  }, [viewCols, colIndexMap, editableColIds, setCellRef, focusCell, scheduleCommit]);
 
   /* ---------------- build TanStack table instance ---------------- */
   const table = useReactTable<RowRecord>({
