@@ -1,7 +1,7 @@
 "use client";
 
 import { flexRender, type Table } from "@tanstack/react-table";
-import React, { useEffect, useRef, useState, type RefObject } from "react";
+import React, { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import AddColumnMenu from "~/app/_components/AddColumnMenu";
 
 type DataGridProps<TData> = {
@@ -13,6 +13,8 @@ type DataGridProps<TData> = {
   onAddTextColumn: () => void;
   onAddNumberColumn: () => void;
   showLoadingMore?: boolean;
+  /** IDs of columns that are currently sorted (for column highlighting) */
+  sortedFieldIds?: string[];
 };
 
 const CELL_W = 180;
@@ -24,6 +26,10 @@ const INDEX_H = 36;
 const ADD_BTN_W = 94;
 const GAP_W = 24; // space to the right of “+”
 
+// Sort highlight colors (header lighter, body a touch deeper)
+const SORT_HEADER_BG = "#FEF6F1";
+const SORT_CELL_BG = "#FBEFE6";
+
 export default function DataGrid<TData>({
   table,
   allSelected,
@@ -32,6 +38,7 @@ export default function DataGrid<TData>({
   onAddTextColumn,
   onAddNumberColumn,
   showLoadingMore,
+  sortedFieldIds,
 }: DataGridProps<TData>) {
   const [menuOpen, setMenuOpen] = useState(false);
   const addBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -55,6 +62,9 @@ export default function DataGrid<TData>({
   const showHRef = useRef(bar.showH); // for hysteresis
 
   const tableElRef = useRef<HTMLTableElement | null>(null);
+
+  // Make lookups cheap
+  const sortedSet = useMemo(() => new Set(sortedFieldIds ?? []), [sortedFieldIds]);
 
   // ---------- layout / measurement ----------
   useEffect(() => {
@@ -91,14 +101,12 @@ export default function DataGrid<TData>({
         (vCols > 0 ? INDEX_W : 0) + Math.max(0, vCols - 1) * CELL_W + ADD_BTN_W + GAP_W;
 
       // prefer real DOM scrollWidth (of the grid content) vs expectation
-      // Use the grid’s own scrollWidth to avoid table mount/unmount churn
       const domScrollW = grid.scrollWidth || 0;
       const nextContentW = Math.max(expectedWidth, domScrollW);
 
       const clientW = round(grid.clientWidth);
 
-      // Hysteresis: once shown, keep showing until contentW <= clientW - HYST
-      // once hidden, only show when contentW >= clientW + HYST
+      // Hysteresis rules
       let nextShowH = showHRef.current;
       if (!showHRef.current) {
         nextShowH = nextContentW >= clientW + HYST;
@@ -133,11 +141,8 @@ export default function DataGrid<TData>({
     const roGrid = new ResizeObserver(schedule);
     roGrid.observe(grid);
 
-    // Window size changes can affect measurements
     const onResize = () => schedule();
     window.addEventListener("resize", onResize, { passive: true });
-
-    // No window scroll listener needed; left/width track viewport via rect
 
     return () => {
       destroyed = true;
@@ -225,6 +230,8 @@ export default function DataGrid<TData>({
                 {hg.headers.map((h, i, arr) => {
                   const isIndex = i === 0;
                   const isLastData = i === arr.length - 1;
+                  const isSortedCol = !isIndex && sortedSet.has(h.column.id);
+
                   return (
                     <th
                       key={h.id}
@@ -237,6 +244,8 @@ export default function DataGrid<TData>({
                         width: isIndex ? INDEX_W : CELL_W,
                         minWidth: isIndex ? INDEX_W : CELL_W,
                         maxWidth: isIndex ? INDEX_W : CELL_W,
+                        // sorted header gets lighter highlight
+                        backgroundColor: isSortedCol ? SORT_HEADER_BG : undefined,
                       }}
                     >
                       <div
@@ -315,6 +324,7 @@ export default function DataGrid<TData>({
                   {cells.map((c, i) => {
                     const isIndex = i === 0;
                     const isLastData = i === lastDataIndex;
+                    const isSortedCol = !isIndex && sortedSet.has(c.column.id);
 
                     return (
                       <td
@@ -335,6 +345,8 @@ export default function DataGrid<TData>({
                           width: isIndex ? INDEX_W : CELL_W,
                           minWidth: isIndex ? INDEX_W : CELL_W,
                           maxWidth: isIndex ? INDEX_W : CELL_W,
+                          // sorted body cells get slightly deeper highlight
+                          backgroundColor: isSortedCol ? SORT_CELL_BG : undefined,
                         }}
                       >
                         {isIndex ? (
@@ -388,7 +400,14 @@ export default function DataGrid<TData>({
                   style={{ height: CELL_H, paddingLeft: 15 }}
                 >
                   <span className="pl-3 pr-2 text-neutral-500 group-hover:text-neutral-700">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
                       <line x1="12" y1="5" x2="12" y2="19" />
                       <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
@@ -396,7 +415,11 @@ export default function DataGrid<TData>({
                   <span className="sr-only">Add row</span>
                 </button>
               </td>
-              <td className="plus-gutter plus-divider-left" style={{ width: ADD_BTN_W }} aria-hidden="true" />
+              <td
+                className="plus-gutter plus-divider-left"
+                style={{ width: ADD_BTN_W }}
+                aria-hidden="true"
+              />
               <td className="gap-col" style={{ width: GAP_W }} aria-hidden="true" />
             </tr>
           </tbody>

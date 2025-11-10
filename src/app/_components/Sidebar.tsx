@@ -1,8 +1,9 @@
 // src/app/_components/Sidebar.tsx
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
 
@@ -15,11 +16,12 @@ import { IconBookOpen } from "~/app/_icons/IconBookOpen";
 import { IconShoppingBagOpen } from "~/app/_icons/IconShoppingBagOpen";
 import { IconUploadSimple } from "~/app/_icons/IconUploadSimple";
 
-export default function Sidebar({
-  showBrand = false,
-}: { showBrand?: boolean }) {
+export default function Sidebar({ showBrand = false }: { showBrand?: boolean }) {
   const router = useRouter();
   const utils = api.useUtils();
+
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+
   const { mutateAsync: createBase, isPending } = api.base.create.useMutation({
     onSuccess: async (base) => {
       await utils.base.listMine.invalidate();
@@ -27,19 +29,27 @@ export default function Sidebar({
     },
   });
 
-  const handleCreate = useCallback(async () => {
-    await createBase({ name: "Untitled Base" });
-  }, [createBase]);
+  const openCreate = useCallback(() => setIsCreateOpen(true), []);
+  const closeCreate = useCallback(() => setIsCreateOpen(false), []);
+
+  const handleConfirmCreate = useCallback(
+    async (rawName?: string) => {
+      const name = (rawName ?? "").trim() || "Untitled Base";
+      await createBase({ name });
+      setIsCreateOpen(false);
+    },
+    [createBase]
+  );
 
   return (
     <aside
       className="
         w-[240px] border-r border-neutral-200 bg-white
-        min-h-0 h-[calc(100dvh-56px)]  /* <-- header is h-14 = 56px */
-        flex flex-col justify-between   /* pin bottom, no scroll */
+        min-h-0 h[calc(100dvh-56px)] md:h-[calc(100dvh-56px)]
+        flex flex-col justify-between
       "
     >
-      {/* (optional) Brand row – header lives in HomeShell, so this is off by default */}
+      {/* (optional) Brand row */}
       {showBrand && (
         <div className="flex h-12 items-center gap-3 border-b border-neutral-200 px-3">
           <button className="inline-flex h-8 w-8 items-center justify-center rounded hover:bg-neutral-100">
@@ -93,18 +103,115 @@ export default function Sidebar({
 
         <div className="mt-3 rounded-lg border border-neutral-200">
           <button
-            onClick={handleCreate}
+            onClick={openCreate}
             disabled={isPending}
             className="flex w-full items-center justify-center rounded-lg bg-[#4169ff] px-3 py-2.5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-60"
-            title="Hook to your create flow"
+            title="Create a new base"
           >
             {isPending ? "Creating…" : "+ Create"}
           </button>
         </div>
       </div>
+
+      {isCreateOpen && (
+        <CreateBaseModal
+          isPending={isPending}
+          onCancel={closeCreate}
+          onConfirm={handleConfirmCreate}
+        />
+      )}
     </aside>
   );
 }
+
+/* ----------------------------- modal component ----------------------------- */
+
+function CreateBaseModal({
+  isPending,
+  onCancel,
+  onConfirm,
+}: {
+  isPending: boolean;
+  onCancel: () => void;
+  onConfirm: (name?: string) => void;
+}) {
+  const [name, setName] = useState("Untitled Base");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Autofocus the input when the modal mounts
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  // Close on ESC, submit on CMD/CTRL+Enter
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") onConfirm(name);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [name, onCancel, onConfirm]);
+
+  const body = (
+    <div
+      aria-modal="true"
+      role="dialog"
+      className="fixed inset-0 z-[1000] flex items-center justify-center"
+    >
+      {/* backdrop */}
+      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
+
+      {/* dialog */}
+      <div className="relative z-10 w-[min(92vw,520px)] rounded-2xl bg-white p-4 shadow-xl">
+        <h2 className="px-1 text-[15px] font-semibold">Create base</h2>
+
+        <div className="mt-3 space-y-2 px-1">
+          <label htmlFor="baseName" className="text-[12px] text-neutral-600">
+            Name
+          </label>
+          <input
+            id="baseName"
+            ref={inputRef}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onConfirm(name);
+            }}
+            className="w-full rounded-md border border-neutral-300 px-3 py-2 text-[14px] outline-none focus:border-[#4169ff]"
+            placeholder="Untitled Base"
+            disabled={isPending}
+          />
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2 px-1">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isPending}
+            className="rounded-md px-3 py-2 text-[13px] text-neutral-700 hover:bg-neutral-100 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(name)}
+            disabled={isPending}
+            className="rounded-md bg-[#4169ff] px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-60"
+          >
+            {isPending ? "Creating…" : "Create base"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // portal so it sits above any stacking contexts
+  return createPortal(body, document.body);
+}
+
+/* ------------------------------- helpers ---------------------------------- */
 
 function NavItem({
   label,

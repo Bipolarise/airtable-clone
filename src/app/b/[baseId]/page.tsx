@@ -33,8 +33,10 @@ import {
 } from "@tanstack/react-table";
 import { api } from "~/trpc/react";
 import { useViewHiddenFields } from "~/app/_logic/useViewHiddenFields";
+import { useViewSort } from "~/app/_logic/useViewSort";
 
 import type { Condition } from "~/app/_components/ViewHeaderBar";
+import type { SortRule } from "~/app/_components/SortModal";
 import HideFieldsModal from "~/app/_components/HideFieldsModal";
 
 /* ---------------- layout constants ---------------- */
@@ -82,9 +84,20 @@ export default function BasePage() {
   }, [urlTableId]);
   const tableId = activeTableId;
 
+  /* ---- tables list (to confirm existence) ---- */
+  const tablesQ = api.table.list.useQuery(
+    { baseId: String(baseId) },
+    { enabled: !!baseId }
+  );
+
+  const tableExists = useMemo(
+    () => !!tableId && (tablesQ.data ?? []).some((t) => t.id === tableId),
+    [tablesQ.data, tableId]
+  );
+
   // SERVER VIEWS
   const viewsQ = api.view.listByTable.useQuery(
-    { tableId: String(tableId || "") },
+    { tableId: tableId },
     { enabled: !!tableId }
   );
 
@@ -98,7 +111,7 @@ export default function BasePage() {
     vs.sort((a, b) => {
       const aIsDefault = a.name === "Grid view" ? 1 : 0;
       const bIsDefault = b.name === "Grid view" ? 1 : 0;
-      return bIsDefault - aIsDefault; // default first
+      return bIsDefault - aIsDefault;
     });
     return vs;
   }, [viewsQ.data]);
@@ -111,7 +124,9 @@ export default function BasePage() {
   // create view on the server
   const createView = api.view.save.useMutation({
     onSuccess: async (created) => {
-      await utils.view.listByTable.invalidate({ tableId: String(tableId || "") });
+      if (tableId) {
+        await utils.view.listByTable.invalidate({ tableId });
+      }
       setActiveViewId(created.id);
 
       if (baseId && tableId) {
@@ -123,24 +138,31 @@ export default function BasePage() {
     },
   });
 
-  // If the table has no views yet, create the default "Grid view"
+  // Ensure default "Grid view" — only after table truly exists
   useEffect(() => {
-    if (!tableId) return;
+    if (!tableId || !tableExists) return;
     if (viewsQ.isLoading || createView.isPending) return;
     if ((viewsQ.data?.length ?? 0) === 0) {
-      createView.mutate({ tableId: String(tableId), name: "Grid view" });
+      createView.mutate({ tableId, name: "Grid view" });
     }
-  }, [tableId, viewsQ.isLoading, viewsQ.data, createView]);
+  }, [
+    tableId,
+    tableExists,
+    viewsQ.isLoading,
+    viewsQ.data?.length,
+    createView.isPending,
+    createView,
+  ]);
 
   // hook to add a new view
   const addView = useCallback(() => {
-    if (!tableId || createView.isPending) return;
+    if (!tableId || !tableExists || createView.isPending) return;
     const n = (views.filter((v) => v.type === "grid").length || 0) + 1;
     createView.mutate({
-      tableId: String(tableId),
+      tableId,
       name: `Grid view ${n}`,
     });
-  }, [tableId, createView.isPending, createView, views]);
+  }, [tableId, tableExists, createView.isPending, createView, views]);
 
   /* ---------------- search state ---------------- */
   const [searchText, setSearchText] = useState("");
@@ -178,11 +200,6 @@ export default function BasePage() {
   /* ---------------- Base + tables ---------------- */
   const { data: base, isLoading: baseLoading, error: baseErr } =
     api.base.byId.useQuery({ id: String(baseId) });
-
-  const tablesQ = api.table.list.useQuery(
-    { baseId: String(baseId) },
-    { enabled: !!baseId }
-  );
 
   const prefetchTable = useCallback(
     async (id: string, search = "") => {
@@ -248,7 +265,7 @@ export default function BasePage() {
       // 1) Switch UI + URL immediately
       startTransition(() => {
         setActiveTableId(id);
-        setActiveViewId(null); // avoid stale per-table view state
+        setActiveViewId(null);
         router.replace(`/b/${String(baseId)}?t=${id}`);
       });
 
@@ -284,12 +301,13 @@ export default function BasePage() {
     setActiveViewId(null);
   }, [tableId]);
 
-  // Pick a default active view once views load (prefer "Grid view")
+  // Pick a default active view once views load — wait for table to exist
   useEffect(() => {
+    if (!tableId || !tableExists) return;
     if (activeViewId) return;
+
     const first =
-      views.find((v) => v.name === "Grid view") ?? // prefer the default
-      views[0];
+      views.find((v) => v.name === "Grid view") ?? views[0];
 
     if (!first) return;
 
@@ -302,7 +320,7 @@ export default function BasePage() {
       router.replace(`/b/${String(baseId)}?${params.toString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views, activeViewId, baseId, tableId]);
+  }, [views, activeViewId, baseId, tableId, tableExists]);
 
   /* ---------------- Columns + rows ---------------- */
   const {
@@ -332,7 +350,7 @@ export default function BasePage() {
     hiddenSet,
   } = useViewHiddenFields(unifiedCols, tableId, activeViewId);
 
-  // For the standalone HideFieldsModal (outside the header)
+  // For the standalone HideFieldsModal
   const toggleHidden = useCallback(
     (id: string) => {
       const curHidden = !!viewCols.find((c) => c.id === id)?.hidden;
@@ -341,7 +359,7 @@ export default function BasePage() {
     [setHidden, viewCols]
   );
 
-  // Only set diffs coming from child -> parent (prevents loops)
+  // Only set diffs coming from child -> parent
   const onHeaderHiddenChange = useCallback(
     (m: Record<string, boolean>) => {
       let changed = false;
@@ -379,10 +397,9 @@ export default function BasePage() {
     [viewCols]
   );
 
-  // ---- stabilize query params so we don't churn keys unnecessarily
+  // ---- stabilize query params
   const conditionsForQuery = useMemo(
     () => filterConditions,
-    // only change ref when contents actually change
     [JSON.stringify(filterConditions)]
   );
 
@@ -410,10 +427,27 @@ export default function BasePage() {
     [rowsQ.data]
   );
 
-  // No extra client filtering during scroll; use server result
+  // No extra client filtering during scroll
   const filteredRows: RowRecord[] = allRows;
 
-  // Only compute highlighting when Find modal is open
+  /* ---------------- sorting state & derived rows ---------------- */
+  const [sortRules, setSortRules] = useState<SortRule[]>([]);
+
+  const sortedRows = useViewSort<RowRecord>(
+    filteredRows,
+    sortRules,
+    unifiedCols.map((c) => ({ id: c.id, label: c.name, type: c.type })),
+    (row, fieldId) =>
+      fieldId === "__row_id__" ? row.id : row.data[fieldId as keyof RowRecord["data"]]
+  );
+
+  // IDs of columns currently sorted (for column highlighting)
+  const sortedFieldIds = useMemo(
+    () => sortRules.map((r) => r.fieldId),
+    [sortRules]
+  );
+
+  /* ---------------- find modal (compute matches only when open) ---------------- */
   const [showModal, setShowModal] = useState(false);
   const textColIds = useMemo(() => {
     if (!showModal) return [];
@@ -425,7 +459,7 @@ export default function BasePage() {
     if (!showModal) return [];
     const out: { rowId: string; colId: string; rowIndex: number; colIndex: number }[] = [];
     if (!normSearch) return out;
-    filteredRows.forEach((r, rIdx) => {
+    sortedRows.forEach((r, rIdx) => {
       textColIds.forEach((cid) => {
         const v = r.data[cid];
         if (typeof v === "string" && v.toLowerCase().includes(normSearch)) {
@@ -439,7 +473,7 @@ export default function BasePage() {
       });
     });
     return out;
-  }, [filteredRows, textColIds, normSearch, showModal]);
+  }, [sortedRows, textColIds, normSearch, showModal]);
 
   const totalRecords = useMemo(() => {
     const firstPage = rowsQ.data?.pages?.[0];
@@ -486,7 +520,7 @@ export default function BasePage() {
       setFocusedCellKey(cellKey);
 
       const tryFocus = (el: HTMLInputElement) => {
-        el.focus({ preventScroll: true } as any);
+        (el as any).focus({ preventScroll: true });
         if (!suppressSelectNextFocusRef.current) el.select();
         suppressSelectNextFocusRef.current = false;
       };
@@ -509,7 +543,7 @@ export default function BasePage() {
           const isFocused = document.activeElement === freshEl;
           if (!isFocused && document.body.contains(freshEl)) {
             try {
-              freshEl.focus({ preventScroll: true } as any);
+              (freshEl as any).focus({ preventScroll: true });
             } catch {}
           }
         }, delay);
@@ -807,32 +841,23 @@ export default function BasePage() {
             switch (c.name) {
               case "Name":
                 return <IconFieldName className="h-4 w-4 text-neutral-700" />;
-
               case "Notes":
               case "Notes 2":
               case "Notes 3":
                 return <IconFieldNotes className="h-4 w-4 text-neutral-700" />;
-
               case "Assignee":
                 return <IconFieldAssignee className="h-4 w-4 text-neutral-700" />;
-
               case "Status":
                 return <IconFieldStatus className="h-4 w-4 text-neutral-700" />;
-
               case "Attachments":
               case "Attachment...":
               case "Attachment Summary":
                 return <IconFieldAttachment className="h-4 w-4 text-neutral-700" />;
-
               case "Number":
                 return <IconFieldNumber className="h-4 w-4 text-neutral-700" />;
-
               default: {
-                // Make generic Single line text (type === "TEXT") use the Number icon too.
                 if (c.type === "TEXT") return <IconFieldName className="h-4 w-4 text-neutral-700" />;
-                // Fallback for any other numeric fields not named "Number"
                 if (c.type === "NUMBER") return <IconFieldNumber className="h-4 w-4 text-neutral-700" />;
-                // Final fallback (should rarely hit)
                 return <IconTinyDot className="h-1 w-1 text-neutral-500" />;
               }
             }
@@ -980,12 +1005,15 @@ export default function BasePage() {
 
   /* ---------------- build TanStack table instance ---------------- */
   const table = useReactTable<RowRecord>({
-    data: filteredRows,
+    data: sortedRows,
     columns: columnDefs,
     state: { rowSelection },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
+    // prevent pagination auto-resets that can trigger update loops
+    autoResetPageIndex: false,
+    autoResetAll: false,
     columnResizeMode: "onChange",
   });
   tableRef.current = table;
@@ -993,8 +1021,8 @@ export default function BasePage() {
 
   /* ---------------- find modal: matches + navigation ---------------- */
   const recordCount = useMemo(
-    () => (normSearch && showModal ? filteredRows.length : 0),
-    [filteredRows, normSearch, showModal]
+    () => (normSearch && showModal ? sortedRows.length : 0),
+    [sortedRows, normSearch, showModal]
   );
   const fieldCount = 0;
   const cellCount = matches.length;
@@ -1034,15 +1062,14 @@ export default function BasePage() {
   /* ---------------- scroll container ---------------- */
   const gridScrollRef = useRef<HTMLDivElement>(null);
 
-  /* ---------------- proactive fill-ahead (buffered prefetch) ---------------- */
-  // Tunables — keep PAGE_SIZE in sync with your API page size (200 here)
+  /* ---------------- proactive fill-ahead ---------------- */
   const PAGE_SIZE = 200;
-  const ROW_H = 36; // approximate row height in px
-  const ROW_PREFETCH_THRESHOLD_ROWS = 60;  // fetch when fewer than 60 rows remain below viewport
-  const MIN_PAGE_BUFFER = 3;               // always keep at least 3 pages loaded
-  const PREFETCH_ROWS_BUDGET = 20_000;     // safety cap per param set
+  const ROW_H = 36;
+  const ROW_PREFETCH_THRESHOLD_ROWS = 60;
+  const MIN_PAGE_BUFFER = 3;
+  const PREFETCH_ROWS_BUDGET = 20_000;
   const MAX_PREFETCH_PAGES_PER_PARAM = Math.ceil(PREFETCH_ROWS_BUDGET / PAGE_SIZE);
-  const SPECULATIVE_BURST_PAGES = 2;       // grab a bit extra opportunistically
+  const SPECULATIVE_BURST_PAGES = 2;
 
   useEffect(() => {
     const el = gridScrollRef.current;
@@ -1051,7 +1078,7 @@ export default function BasePage() {
     let filling = false;
     let fetchedForThisParam = 0;
 
-    const rowsLoaded = () => filteredRows.length;
+    const rowsLoaded = () => sortedRows.length;
     const rowsVisible = () => Math.ceil(el.clientHeight / ROW_H);
     const topIndex = () => Math.floor(el.scrollTop / ROW_H);
     const remainingBelow = () => rowsLoaded() - (topIndex() + rowsVisible());
@@ -1080,13 +1107,11 @@ export default function BasePage() {
       if (filling) return;
       filling = true;
       try {
-        // Top-up if we're nearing the end of what we have
         while (canFetch() && remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS) {
           const ok = await doFetch();
           if (!ok) break;
         }
 
-        // Maintain minimum page buffer (smooth for fast wheels/trackpads)
         let pagesLoaded = rowsQ.data?.pages?.length ?? 0;
         while (canFetch() && pagesLoaded < MIN_PAGE_BUFFER) {
           const ok = await doFetch();
@@ -1094,7 +1119,6 @@ export default function BasePage() {
           pagesLoaded++;
         }
 
-        // Small speculative burst at mount/when running low
         if (aggressive || remainingBelow() < ROW_PREFETCH_THRESHOLD_ROWS / 2) {
           await burstFetch(SPECULATIVE_BURST_PAGES);
         }
@@ -1103,11 +1127,9 @@ export default function BasePage() {
       }
     };
 
-    // On mount/param change: aggressively prefill
     fetchedForThisParam = 0;
     void fillAhead(true);
 
-    // Throttled listener for scroll/wheel/resize
     let ticking = false;
     const onScrollish = () => {
       if (!canFetch()) return;
@@ -1133,7 +1155,7 @@ export default function BasePage() {
       ro.disconnect();
     };
   }, [
-    filteredRows.length,
+    sortedRows.length,
     rowsQ.hasNextPage,
     rowsQ.isFetchingNextPage,
     rowsQ.data?.pages?.length,
@@ -1141,7 +1163,7 @@ export default function BasePage() {
     conditionsForQuery,
   ]);
 
-  /* ---------------- measure header height for the ViewsPanel offset ---------------- */
+  /* ---------------- measure header height ---------------- */
   const toolbarWrapRef = useRef<HTMLDivElement>(null);
   const viewbarWrapRef = useRef<HTMLDivElement>(null);
   const [hideOpen, setHideOpen] = useState(false);
@@ -1194,7 +1216,7 @@ export default function BasePage() {
   if (colsErr) return <div className="p-6 text-red-600">Error: {colsErr.message}</div>;
   if (!base) return <div className="p-6">Not found.</div>;
 
-  // GRID readiness — don’t blank UI if we still have data while refetching
+  // GRID readiness
   const gridLoading =
     colsLoading ||
     !colsFromServer ||
@@ -1246,6 +1268,9 @@ export default function BasePage() {
             onChangeConditions={setFilterConditions}
             onToggleViews={() => setViewsOpen((o) => !o)}
             activeViewName={activeViewName}
+            /* sorting props */
+            sortRules={sortRules}
+            onChangeSortRules={setSortRules}
           />
         </div>
 
@@ -1268,10 +1293,12 @@ export default function BasePage() {
                 onAddTextColumn={handleAddTextColumn}
                 onAddNumberColumn={handleAddNumberColumn}
                 showLoadingMore={false}
+                /* tell grid which columns are sorted so it can highlight them */
+                sortedFieldIds={sortedFieldIds}
               />
             )}
 
-            {/* kept for layout parity; no observer attached */}
+            {/* kept for layout parity */}
             <div style={{ height: 1 }} />
           </div>
 

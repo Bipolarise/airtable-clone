@@ -9,10 +9,12 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-  // icons
+
+// icons
 import { IconDotsSixVertical } from "~/app/_icons/IconDotsSixVertical";
 import { IconQuestion } from "~/app/_icons/IconQuestion";
 import { IconX } from "~/app/_icons/IconX";
+import { IconMiniPill } from "~/app/_icons/IconMiniPill";
 
 /* ---------------- Tunables ---------------- */
 const MODAL_WIDTH = 320;
@@ -171,7 +173,7 @@ export default function HideFieldsModal({
               title={f.hidden ? "Show field" : "Hide field"}
             >
               {/* tiny pill */}
-              <AirtableMiniPill on={!f.hidden} />
+              <IconMiniPill on={!f.hidden} />
 
               {/* icon + label */}
               <span className="shrink-0">
@@ -257,35 +259,4 @@ function FieldIcon({
         </svg>
       );
   }
-}
-
-/* Airtable micro pill */
-function AirtableMiniPill({ on }: { on: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={
-        "pill flex flex-none items-center rounded-full border-box " +
-        (on ? "justify-end" : "justify-start")
-      }
-      style={{
-        height: 8,
-        width: 12.8,
-        padding: 2,
-        borderRadius: 9999,
-        backgroundColor: on ? "var(--palette-green-green, #2f7d1f)" : "#ffffff",
-        border: on ? "none" : "1px solid rgb(212,212,212)",
-      }}
-    >
-      <span
-        className="white circle flex-none"
-        style={{
-          width: 4,
-          height: 4,
-          borderRadius: 9999,
-          background: "#fff",
-        }}
-      />
-    </span>
-  );
 }
