@@ -20,7 +20,9 @@ import { IconFieldNumber } from "~/app/_icons/IconFieldNumber";
 
 import FilterModal from "~/app/_components/FilterModal";
 import AddConditionModal from "~/app/_components/AddConditionModal";
-import HideFieldsModal, { type HideFieldsModalField } from "~/app/_components/HideFieldsModal";
+import HideFieldsModal, {
+  type HideFieldsModalField,
+} from "~/app/_components/HideFieldsModal";
 import SortModal, { type SortRule } from "~/app/_components/SortModal";
 import SortEditorModal from "~/app/_components/SortEditorModal";
 
@@ -85,15 +87,19 @@ const SORT_ACTIVE_RING_BASE = "#F5D6BA";
 const SORT_ACTIVE_RING_HOVER = "#E8B389";
 
 /* Make all header buttons the same size/hover area */
-const BTN = "flex items-center gap-2 rounded px-2 h-7 hover:bg-neutral-100";
-const BTN_ICON = "flex items-center rounded px-2 h-7 hover:bg-neutral-100";
+const BTN =
+  "flex items-center gap-2 rounded px-2 h-7 hover:bg-neutral-100 cursor-pointer";
+const BTN_ICON =
+  "flex items-center rounded px-2 h-7 hover:bg-neutral-100 cursor-pointer";
 
 /* ---- Exclusions ---- */
 const EXCLUDED_LABELS = new Set(["name"]);
-const isExcluded = (f: FieldOptionForModal) => EXCLUDED_LABELS.has(f.label.toLowerCase());
+const isExcluded = (f: FieldOptionForModal) =>
+  EXCLUDED_LABELS.has(f.label.toLowerCase());
 
 function rid() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    return crypto.randomUUID();
   return `id_${Math.random().toString(36).slice(2, 9)}`;
 }
 function shallowEqualMap(a: Record<string, boolean>, b: Record<string, boolean>) {
@@ -139,7 +145,9 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
       .map((c) => fieldOptions.find((f) => f.id === c.fieldId)?.label)
       .filter(Boolean) as string[];
     const seen = new Set<string>();
-    const unique = labels.filter((l) => (seen.has(l) ? false : (seen.add(l), true)));
+    const unique = labels.filter((l) =>
+      seen.has(l) ? false : (seen.add(l), true)
+    );
     return unique.join(", ");
   }, [activeConds, fieldOptions, activeCount]);
 
@@ -150,7 +158,8 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   const filterBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const openAppropriate = () => {
-    if (filterOpen || conditionOpen) return setFilterOpen(false), setConditionOpen(false);
+    if (filterOpen || conditionOpen)
+      return setFilterOpen(false), setConditionOpen(false);
     if (conditions.length > 0) setConditionOpen(true);
     else setFilterOpen(true);
   };
@@ -164,7 +173,11 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   }, [conditionOpen, conditions.length]);
 
   const makeStarterCondition = (): Condition => {
-    const first = fieldOptions[0] ?? { id: null, type: "TEXT" as const, label: "" };
+    const first = fieldOptions[0] ?? {
+      id: null,
+      type: "TEXT" as const,
+      label: "",
+    };
     const op: OperatorId = first.type === "NUMBER" ? "gt" : "contains";
     return {
       id: rid(),
@@ -184,7 +197,9 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     const corrected: Record<string, boolean> = { ...seedHiddenMap };
     for (const f of fieldOptions) if (isExcluded(f)) corrected[f.id] = false;
 
-    setHiddenById((prev) => (shallowEqualMap(prev, corrected) ? prev : corrected));
+    setHiddenById((prev) =>
+      shallowEqualMap(prev, corrected) ? prev : corrected
+    );
     lastSentRef.current = corrected;
   }, [seedHiddenMap, fieldOptions]);
 
@@ -196,7 +211,8 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
     }
   };
 
-  const toggleHidden = (id: string) => commitHiddenMap({ ...hiddenById, [id]: !hiddenById[id] });
+  const toggleHidden = (id: string) =>
+    commitHiddenMap({ ...hiddenById, [id]: !hiddenById[id] });
   const hideAll = () => {
     const next: Record<string, boolean> = { ...hiddenById };
     for (const f of fieldOptions) next[f.id] = isExcluded(f) ? false : true;
@@ -228,7 +244,9 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
       default:
         if (type === "TEXT") return <IconFieldName className={cls} />;
         if (type === "NUMBER") return <IconFieldNumber className={cls} />;
-        return <span className="inline-block h-1 w-1 rounded-full bg-neutral-500" />;
+        return (
+          <span className="inline-block h-1 w-1 rounded-full bg-neutral-500" />
+        );
     }
   };
 
@@ -247,19 +265,23 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
   );
 
   const filterBtnClass =
-    "flex items-center gap-2 rounded px-2 h-7 " +
+    "flex items-center gap-2 rounded px-2 h-7 cursor-pointer " +
     (activeCount > 0
       ? "text-neutral-700"
       : "text-neutral-700 transition-colors hover:bg-neutral-100");
 
-  const filterLabel = activeCount > 0 && filteredBy ? `Filtered by ${filteredBy}` : "Filter";
+  const filterLabel =
+    activeCount > 0 && filteredBy ? `Filtered by ${filteredBy}` : "Filter";
 
   /* ---------------- Sort ---------------- */
   const [sortOpen, setSortOpen] = useState(false);
   const sortBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // editor modal state
-  const [sortEditor, setSortEditor] = useState<{ open: boolean; fieldId: string | null }>({
+  const [sortEditor, setSortEditor] = useState<{
+    open: boolean;
+    fieldId: string | null;
+  }>({
     open: false,
     fieldId: null,
   });
@@ -324,7 +346,9 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
 
           <button className={BTN}>
             <IconGridFeature className="h-4 w-4 text-[#166ee1]" />
-            <span className="font-medium text-neutral-800">{activeViewName ?? "Grid view"}</span>
+            <span className="font-medium text-neutral-800">
+              {activeViewName ?? "Grid view"}
+            </span>
             <svg
               className="text-neutral-500"
               width="14"
@@ -370,7 +394,9 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
                 ? {
                     backgroundColor: FILTER_ACTIVE_BG,
                     boxShadow: `0 0 0 ${hoveringFilter ? 2 : 1}px ${
-                      hoveringFilter ? FILTER_ACTIVE_RING_HOVER : FILTER_ACTIVE_RING_BASE
+                      hoveringFilter
+                        ? FILTER_ACTIVE_RING_HOVER
+                        : FILTER_ACTIVE_RING_BASE
                     } inset`,
                   }
                 : undefined
@@ -431,7 +457,11 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
               open={true}
               anchorEl={sortBtnRef.current}
               onClose={() => setSortOpen(false)}
-              fields={fieldOptions.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+              fields={fieldOptions.map((f) => ({
+                id: f.id,
+                label: f.label,
+                type: f.type,
+              }))}
               rules={sortRules}
               onChangeRules={onChangeSortRules}
               onOpenEditor={(fieldId) => {
@@ -446,7 +476,11 @@ export default function ViewHeaderBar(props: ViewHeaderBarProps) {
             <SortEditorModal
               anchorEl={sortBtnRef.current}
               fieldId={sortEditor.fieldId ?? undefined}
-              fields={fieldOptions.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+              fields={fieldOptions.map((f) => ({
+                id: f.id,
+                label: f.label,
+                type: f.type,
+              }))}
               rules={sortRules}
               onChangeRules={(next) => onChangeSortRules(next)}
               onClose={closeSortEditor}
@@ -541,7 +575,9 @@ function HideFieldsButton({
         }
       >
         <IconEyeSlash
-          className={`h-[14px] w-[14px] ${hasHidden ? "text-neutral-700" : "text-neutral-600"}`}
+          className={`h-[14px] w-[14px] ${
+            hasHidden ? "text-neutral-700" : "text-neutral-600"
+          }`}
         />
         <span>{label}</span>
       </button>

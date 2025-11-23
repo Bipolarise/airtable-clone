@@ -163,6 +163,7 @@ export default function AddColumnMenu({
   const itemBaseCls = [
     "w-full flex items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] text-neutral-900",
     "hover:bg-neutral-50",
+    "cursor-pointer", // 👈 hand cursor for the options
     "outline-none ring-0 [box-shadow:none]",
     "focus:outline-none focus:ring-0 focus:[box-shadow:none]",
     "focus-visible:outline-none focus-visible:ring-0 focus-visible:[box-shadow:none]",
@@ -187,7 +188,7 @@ export default function AddColumnMenu({
       style={{
         top: pos?.top ?? -9999,
         left: pos?.left ?? -9999,
-        width: 288,                 // 18rem
+        width: 288, // 18rem
         maxWidth: pos?.maxWidth ?? 288,
         transformOrigin: pos?.openUp ? "bottom left" : "top left",
       }}

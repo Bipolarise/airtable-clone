@@ -159,7 +159,7 @@ export default function DataGrid<TData>({
     if (syncingRef.current) return;
     const grid = gridRef.current;
     const barEl = bottomScrollRef.current;
-    if (!grid || !barEl) return;
+       if (!grid || !barEl) return;
     const next = grid.scrollLeft;
     if (Math.abs(barEl.scrollLeft - next) < 1) return;
     syncingRef.current = true;
@@ -281,7 +281,7 @@ export default function DataGrid<TData>({
                     type="button"
                     title="Add column"
                     onClick={() => setMenuOpen((o) => !o)}
-                    className="flex h-[36px] w-full items-center justify-center text-[16px] leading-none text-neutral-700 hover:bg-neutral-100 active:bg-neutral-200 transition-colors focus:outline-none focus:ring-0"
+                    className="flex h-[36px] w-full cursor-pointer items-center justify-center text-[16px] leading-none text-neutral-700 hover:bg-neutral-100 active:bg-neutral-200 transition-colors focus:outline-none focus:ring-0"
                     aria-haspopup="menu"
                     aria-expanded={menuOpen}
                   >
@@ -396,7 +396,7 @@ export default function DataGrid<TData>({
                   onClick={onAddRow}
                   type="button"
                   aria-label="Add row"
-                  className="group flex w-full items-center bg-white transition-colors hover:bg-neutral-50"
+                  className="group flex w-full cursor-pointer items-center bg-white transition-colors hover:bg-neutral-50"
                   style={{ height: CELL_H, paddingLeft: 15 }}
                 >
                   <span className="pl-3 pr-2 text-neutral-500 group-hover:text-neutral-700">
